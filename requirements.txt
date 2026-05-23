@@ -1,0 +1,6 @@
+agent-framework
+agent-framework-openai
+pydantic>=2.0
+python-dotenv
+debugpy
+agent-dev-cli>=0.0.1b260427

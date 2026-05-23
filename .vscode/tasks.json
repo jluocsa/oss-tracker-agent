@@ -1,0 +1,42 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "oss-tracker: run-once (CLI)",
+            "type": "shell",
+            "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "args": ["-m", "oss_tracker_agent.main", "--cli", "--verbose"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": "test"
+        },
+        {
+            "label": "oss-tracker: install scheduled task",
+            "type": "shell",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", "${workspaceFolder}/install-task.ps1"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            "label": "oss-tracker: serve (Agent Inspector)",
+            "type": "shell",
+            "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "args": [
+                "-m", "debugpy",
+                "--listen", "127.0.0.1:5679",
+                "-m", "agentdev",
+                "run", "oss_tracker_agent/main.py",
+                "--verbose", "--port", "8088",
+                "--", "--server"
+            ],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "isBackground": true
+        }
+    ]
+}

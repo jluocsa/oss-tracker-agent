@@ -1,0 +1,46 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "OSS Tracker — CLI (one-shot)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "oss_tracker_agent.main",
+            "args": ["--cli", "--verbose"],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "envFile": "${workspaceFolder}/.env",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        },
+        {
+            "name": "OSS Tracker — Server (Foundry Toolkit Agent Inspector)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "agentdev",
+            "args": [
+                "run",
+                "oss_tracker_agent/main.py",
+                "--verbose",
+                "--port", "8088",
+                "--",
+                "--server"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "envFile": "${workspaceFolder}/.env",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe"
+        },
+        {
+            "name": "OSS Tracker — Attach (port 5679)",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 5679
+            },
+            "justMyCode": false
+        }
+    ]
+}

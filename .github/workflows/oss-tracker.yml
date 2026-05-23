@@ -1,0 +1,126 @@
+name: OSS Tracker Agent
+
+# Daily PR triage + email digest.
+#
+# Cron is 09:00 UTC = 1 AM PST (Nov–Mar) / 2 AM PDT (Mar–Nov).
+# GitHub Actions cron is UTC-only, so DST drifts the local hour by 1.
+# Override the time by editing the cron expression below.
+#
+# REQUIRED SECRETS (Repo Settings → Secrets and variables → Actions → Secrets):
+#   OPENAI_API_KEY          your OpenAI key
+#   GH_PAT_OSS_TRACKER      classic PAT with `repo` + `workflow` scopes
+#                           (needed to view/rerun checks and update branches
+#                            on external repos like microsoft/graphrag etc.)
+#   SMTP_USERNAME           your @outlook.com address
+#   SMTP_PASSWORD           Outlook app password
+#   NOTIFY_EMAIL_FROM       same as SMTP_USERNAME
+#   NOTIFY_EMAIL_TO         where to send the digest
+#
+# OPTIONAL VARIABLES (Settings → Secrets and variables → Actions → Variables):
+#   GH_AUTHOR               default: jluocsa
+#   IGNORE_REPOS            default: jluocsa/Practice-Exam
+#   OPENAI_CHAT_MODEL       default: gpt-4o-mini
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip the actual email send (log only)'
+        type: boolean
+        default: false
+      verbose:
+        description: 'DEBUG-level logging'
+        type: boolean
+        default: false
+
+concurrency:
+  group: oss-tracker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  triage:
+    name: Daily PR triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_OSS_TRACKER }}
+        run: |
+          gh --version
+          gh auth status
+
+      - name: Run OSS Tracker Agent
+        env:
+          # Model
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_CHAT_MODEL: ${{ vars.OPENAI_CHAT_MODEL || 'gpt-4o-mini' }}
+
+          # gh CLI auth
+          GH_TOKEN: ${{ secrets.GH_PAT_OSS_TRACKER }}
+
+          # Tracker config
+          GH_AUTHOR: ${{ vars.GH_AUTHOR || 'jluocsa' }}
+          IGNORE_REPOS: ${{ vars.IGNORE_REPOS || 'jluocsa/Practice-Exam' }}
+          REFRESH_SCRIPT: ''   # CI skips the local refresh — agent uses gh directly
+          AUTO_RERUN_FAILED_CHECKS: 'true'
+          AUTO_UPDATE_BRANCH: 'true'
+
+          # Email
+          SMTP_HOST: smtp.office365.com
+          SMTP_PORT: '587'
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL_FROM: ${{ secrets.NOTIFY_EMAIL_FROM }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
+          EMAIL_DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+        run: |
+          mkdir -p logs
+          if [ "${{ inputs.verbose }}" = "true" ]; then
+            python -m oss_tracker_agent.main --cli --verbose 2>&1 | tee logs/run.log
+          else
+            python -m oss_tracker_agent.main --cli 2>&1 | tee logs/run.log
+          fi
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oss-tracker-log-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## OSS Tracker — $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            if [ -f logs/run.log ]; then
+              echo "### Tail"
+              echo '```'
+              tail -n 60 logs/run.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

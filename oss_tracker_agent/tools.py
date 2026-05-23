@@ -1,0 +1,401 @@
+"""Deterministic Python tools: gh CLI wrappers, refresh script runner, SMTP sender."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import smtplib
+import subprocess
+import sys
+from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+from typing import Any
+
+from .models import (
+    ActionResult,
+    ActionStatus,
+    ActionType,
+    CheckRun,
+    PRSnapshot,
+    Review,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    logger.debug("RUN: %s", " ".join(cmd))
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _powershell_exe() -> str | None:
+    """Return the first available PowerShell executable, or None."""
+    for candidate in ("pwsh", "pwsh.exe", "powershell.exe"):
+        if shutil.which(candidate):
+            return candidate
+    return None
+
+
+def refresh_tracker(refresh_script: Path) -> str:
+    """Invoke refresh-oss-status.ps1 via PowerShell. Returns tail of stdout."""
+    if not str(refresh_script).strip():
+        return "[skipped] REFRESH_SCRIPT not set"
+    if not refresh_script.is_file():
+        return f"[skipped] refresh script not found: {refresh_script}"
+    ps = _powershell_exe()
+    if not ps:
+        return "[skipped] no powershell/pwsh on PATH"
+    proc = _run(
+        [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(refresh_script)],
+        cwd=refresh_script.parent,
+        timeout=300,
+    )
+    output = (proc.stdout or "") + (proc.stderr or "")
+    tail = "\n".join(output.strip().splitlines()[-10:])
+    if proc.returncode != 0:
+        return f"[exit={proc.returncode}]\n{tail}"
+    return tail
+
+
+def _gh_json(args: list[str], timeout: int = 60) -> Any:
+    """Run a gh command that emits JSON. Returns parsed JSON or {} on failure."""
+    proc = _run(["gh", *args], timeout=timeout)
+    if proc.returncode != 0:
+        logger.warning("gh %s failed: %s", " ".join(args), proc.stderr.strip()[:400])
+        return {}
+    try:
+        return json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except json.JSONDecodeError as exc:
+        logger.warning("gh JSON parse error: %s", exc)
+        return {}
+
+
+def fetch_open_prs(author: str, ignore_repos: set[str]) -> list[PRSnapshot]:
+    """List open PRs by author and enrich each with `gh pr view` detail."""
+    search = _gh_json(
+        [
+            "search",
+            "prs",
+            "--author",
+            author,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "repository,number,title,url,createdAt",
+        ]
+    )
+    if not isinstance(search, list):
+        return []
+
+    snapshots: list[PRSnapshot] = []
+    for item in search:
+        repo = item.get("repository", {}).get("nameWithOwner", "")
+        if not repo or repo in ignore_repos:
+            continue
+        number = item.get("number")
+        if not number:
+            continue
+
+        detail = _gh_json(
+            [
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                repo,
+                "--json",
+                "number,url,title,mergeable,mergeStateStatus,reviewDecision,isDraft,headRepositoryOwner,statusCheckRollup,reviews,createdAt",
+            ]
+        )
+        if not isinstance(detail, dict) or not detail:
+            continue
+
+        checks_raw = detail.get("statusCheckRollup") or []
+        checks: list[CheckRun] = []
+        for c in checks_raw:
+            checks.append(
+                CheckRun(
+                    name=c.get("name") or "",
+                    workflow_name=c.get("workflowName") or "",
+                    conclusion=c.get("conclusion"),
+                    status=c.get("status"),
+                    details_url=c.get("detailsUrl"),
+                )
+            )
+
+        reviews_raw = detail.get("reviews") or []
+        reviews: list[Review] = []
+        for r in reviews_raw:
+            reviews.append(
+                Review(
+                    author=(r.get("author") or {}).get("login", ""),
+                    state=r.get("state", ""),
+                )
+            )
+
+        created_at_str = detail.get("createdAt") or item.get("createdAt") or ""
+        try:
+            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            age_days = max(0, (datetime.now(timezone.utc) - created_at).days)
+        except (ValueError, AttributeError):
+            age_days = 0
+
+        head_owner_obj = detail.get("headRepositoryOwner") or {}
+        head_owner = head_owner_obj.get("login") if isinstance(head_owner_obj, dict) else None
+
+        snapshots.append(
+            PRSnapshot(
+                number=number,
+                repo=repo,
+                title=detail.get("title") or "",
+                url=detail.get("url") or "",
+                mergeable=detail.get("mergeable"),
+                merge_state=detail.get("mergeStateStatus"),
+                review_decision=detail.get("reviewDecision"),
+                is_draft=bool(detail.get("isDraft")),
+                head_repository_owner=head_owner,
+                age_days=age_days,
+                checks=checks,
+                reviews=reviews,
+            )
+        )
+
+    return snapshots
+
+
+def rerun_failed_checks(pr: PRSnapshot) -> ActionResult:
+    """Re-run failed workflow runs on the PR via `gh run rerun --failed`."""
+    if not pr.failing_checks:
+        return ActionResult(
+            pr_number=pr.number,
+            repo=pr.repo,
+            action=ActionType.RERUN_FAILED_CHECKS,
+            status=ActionStatus.SKIPPED,
+            detail="no failing checks",
+        )
+
+    run_ids: set[str] = set()
+    for c in pr.failing_checks:
+        if not c.details_url:
+            continue
+        parts = c.details_url.rstrip("/").split("/")
+        if "runs" in parts:
+            idx = parts.index("runs")
+            if idx + 1 < len(parts):
+                run_ids.add(parts[idx + 1])
+
+    if not run_ids:
+        return ActionResult(
+            pr_number=pr.number,
+            repo=pr.repo,
+            action=ActionType.RERUN_FAILED_CHECKS,
+            status=ActionStatus.SKIPPED,
+            detail="failing checks have no actions run_id",
+        )
+
+    succeeded: list[str] = []
+    failed: list[str] = []
+    for run_id in run_ids:
+        proc = _run(["gh", "run", "rerun", run_id, "--failed", "--repo", pr.repo])
+        if proc.returncode == 0:
+            succeeded.append(run_id)
+        else:
+            failed.append(f"{run_id}:{proc.stderr.strip()[:120]}")
+
+    if failed and not succeeded:
+        return ActionResult(
+            pr_number=pr.number,
+            repo=pr.repo,
+            action=ActionType.RERUN_FAILED_CHECKS,
+            status=ActionStatus.FAILED,
+            detail="; ".join(failed),
+        )
+    return ActionResult(
+        pr_number=pr.number,
+        repo=pr.repo,
+        action=ActionType.RERUN_FAILED_CHECKS,
+        status=ActionStatus.SUCCESS,
+        detail=f"reran {len(succeeded)} run(s): {','.join(succeeded)}"
+        + (f"; failed: {';'.join(failed)}" if failed else ""),
+    )
+
+
+def update_branch(pr: PRSnapshot) -> ActionResult:
+    """Update the PR branch with upstream main via `gh pr update-branch`."""
+    proc = _run(["gh", "pr", "update-branch", str(pr.number), "--repo", pr.repo])
+    if proc.returncode == 0:
+        return ActionResult(
+            pr_number=pr.number,
+            repo=pr.repo,
+            action=ActionType.UPDATE_BRANCH,
+            status=ActionStatus.SUCCESS,
+            detail=proc.stdout.strip()[:200] or "branch updated",
+        )
+    return ActionResult(
+        pr_number=pr.number,
+        repo=pr.repo,
+        action=ActionType.UPDATE_BRANCH,
+        status=ActionStatus.FAILED,
+        detail=proc.stderr.strip()[:300],
+    )
+
+
+def send_email_smtp(
+    subject: str,
+    body_markdown: str,
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str,
+    smtp_password: str,
+    email_from: str,
+    email_to: str,
+    dry_run: bool = False,
+) -> ActionResult:
+    """Send the digest email via STARTTLS SMTP."""
+    if dry_run:
+        return ActionResult(
+            pr_number=0,
+            repo="-",
+            action=ActionType.NOTIFY_HUMAN,
+            status=ActionStatus.SKIPPED,
+            detail=f"dry-run; would send to {email_to} (subject: {subject})",
+        )
+
+    if not smtp_password or smtp_password.startswith("<"):
+        return ActionResult(
+            pr_number=0,
+            repo="-",
+            action=ActionType.NOTIFY_HUMAN,
+            status=ActionStatus.SKIPPED,
+            detail="SMTP_PASSWORD not configured",
+        )
+
+    html_body = _markdown_to_html(body_markdown)
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = email_from
+    msg["To"] = email_to
+    msg.attach(MIMEText(body_markdown, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(smtp_username, smtp_password)
+            server.sendmail(email_from, [email_to], msg.as_string())
+        return ActionResult(
+            pr_number=0,
+            repo="-",
+            action=ActionType.NOTIFY_HUMAN,
+            status=ActionStatus.SUCCESS,
+            detail=f"sent to {email_to}",
+        )
+    except Exception as exc:  # noqa: BLE001 — surface any SMTP failure
+        return ActionResult(
+            pr_number=0,
+            repo="-",
+            action=ActionType.NOTIFY_HUMAN,
+            status=ActionStatus.FAILED,
+            detail=f"{type(exc).__name__}: {exc}"[:400],
+        )
+
+
+def _markdown_to_html(md: str) -> str:
+    """Lightweight markdown -> HTML for the email body (no external deps)."""
+    lines = md.splitlines()
+    out: list[str] = ["<html><body style='font-family: -apple-system, Segoe UI, sans-serif; font-size: 14px;'>"]
+    in_list = False
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped.startswith("### "):
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append(f"<h3>{_inline(stripped[4:])}</h3>")
+        elif stripped.startswith("## "):
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append(f"<h2>{_inline(stripped[3:])}</h2>")
+        elif stripped.startswith("# "):
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append(f"<h1>{_inline(stripped[2:])}</h1>")
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_inline(stripped[2:])}</li>")
+        elif not stripped:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append("<br>")
+        else:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            out.append(f"<p>{_inline(stripped)}</p>")
+    if in_list:
+        out.append("</ul>")
+    out.append("</body></html>")
+    return "\n".join(out)
+
+
+def _inline(text: str) -> str:
+    import re
+
+    # links: [text](url)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    # bold **text**
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
+    # inline code `x`
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    return text
+
+
+def load_config_from_env() -> dict[str, str]:
+    """Read all relevant env vars in one shot."""
+    # In CI (GitHub Actions sets CI=true), default to skipping the local refresh script
+    # regardless of platform. On a local Windows dev box, fall back to the user's known path.
+    is_ci = os.environ.get("CI", "").lower() == "true"
+    if is_ci:
+        platform_default = ""
+    elif sys.platform == "win32":
+        platform_default = r"C:\Users\luojohn\github\jluocsa\refresh-oss-status.ps1"
+    else:
+        platform_default = ""
+    default_refresh = os.environ.get("REFRESH_SCRIPT", platform_default)
+    return {
+        "refresh_script": default_refresh,
+        "gh_author": os.environ.get("GH_AUTHOR", "jluocsa"),
+        "ignore_repos": os.environ.get("IGNORE_REPOS", "jluocsa/Practice-Exam"),
+        "auto_rerun": os.environ.get("AUTO_RERUN_FAILED_CHECKS", "true"),
+        "auto_update_branch": os.environ.get("AUTO_UPDATE_BRANCH", "true"),
+        "email_from": os.environ.get("NOTIFY_EMAIL_FROM", ""),
+        "email_to": os.environ.get("NOTIFY_EMAIL_TO", ""),
+        "smtp_host": os.environ.get("SMTP_HOST", "smtp.office365.com"),
+        "smtp_port": os.environ.get("SMTP_PORT", "587"),
+        "smtp_user": os.environ.get("SMTP_USERNAME", ""),
+        "smtp_pass": os.environ.get("SMTP_PASSWORD", ""),
+        "email_dry_run": os.environ.get("EMAIL_DRY_RUN", "false"),
+    }
