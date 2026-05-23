@@ -95,6 +95,9 @@ jobs:
           REFRESH_SCRIPT: ''   # CI skips the local refresh — agent uses gh directly
           AUTO_RERUN_FAILED_CHECKS: 'true'
           AUTO_UPDATE_BRANCH: 'true'
+          DEEP_DIVE_ENABLED: ${{ vars.DEEP_DIVE_ENABLED || 'true' }}
+          DEEP_DIVE_MAX_PRS: ${{ vars.DEEP_DIVE_MAX_PRS || '3' }}
+          SELF_REVIEW_ENABLED: ${{ vars.SELF_REVIEW_ENABLED || 'true' }}
 
           # Email
           SMTP_HOST: smtp.office365.com
@@ -128,9 +131,31 @@ jobs:
             echo "## OSS Tracker — $(date -u +'%Y-%m-%d %H:%M UTC')"
             echo ""
             if [ -f logs/run.log ]; then
-              echo "### Tail"
+              echo "### Pipeline counts"
               echo '```'
-              tail -n 60 logs/run.log
+              grep -E "snapshots: |classifications: |deep-dive analyses attached: |self-review verdict=|actions: " logs/run.log || true
+              echo '```'
+
+              # Extract the rendered drafter digest: everything from the last
+              # occurrence of "## Needs your attention" or "## Quiet PRs" to
+              # the line just before the next logger timestamp.
+              echo ""
+              echo "### Digest"
+              awk '
+                /^## (Needs your attention|Auto-actions taken|Quiet PRs)/ { capturing=1 }
+                capturing && /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} (INFO|DEBUG|WARNING|ERROR)/ { capturing=0; next }
+                capturing { print }
+              ' logs/run.log > logs/digest.md || true
+              if [ -s logs/digest.md ]; then
+                cat logs/digest.md
+              else
+                echo "_(no digest rendered — likely zero open PRs)_"
+              fi
+
+              echo ""
+              echo "### Log tail"
+              echo '```'
+              tail -n 40 logs/run.log
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

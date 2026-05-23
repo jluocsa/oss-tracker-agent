@@ -32,6 +32,7 @@ from .agents import (
     make_analyzer_agent,
     make_deep_dive_agent,
     make_digest_drafter_agent,
+    make_self_review_agent,
 )
 from .models import (
     ActionResult,
@@ -41,6 +42,7 @@ from .models import (
     DeepDiveAnalysis,
     PRClassification,
     PRSnapshot,
+    SelfReview,
 )
 from .tools import (
     fetch_failed_check_logs,
@@ -241,6 +243,72 @@ async def _run_deep_dive(
     return dives_done
 
 
+def _parse_self_review(raw: str) -> SelfReview | None:
+    """Coerce a self-review agent reply into SelfReview, or None on parse failure."""
+    try:
+        parsed = json.loads(_strip_json_fence(raw))
+    except json.JSONDecodeError as exc:
+        logger.warning("self-review JSON parse failed: %s; raw=%s", exc, raw[:200])
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    verdict = str(parsed.get("verdict", "approved")).strip().lower()
+    if verdict not in {"approved", "concerns", "broken"}:
+        verdict = "concerns"
+    issues_raw = parsed.get("issues") or []
+    suggestions_raw = parsed.get("suggestions") or []
+    issues = [str(x).strip()[:160] for x in issues_raw if str(x).strip()][:5]
+    suggestions = [str(x).strip()[:160] for x in suggestions_raw if str(x).strip()][:5]
+    return SelfReview(verdict=verdict, issues=issues, suggestions=suggestions)
+
+
+async def _run_self_review(
+    classifications: list[PRClassification],
+    action_results: list[ActionResult],
+    digest_markdown: str,
+) -> SelfReview | None:
+    """Run the self-review critic agent against the drafter's final digest."""
+    if not digest_markdown.strip() or not classifications:
+        return None
+    agent = make_self_review_agent()
+    payload = json.dumps(
+        {
+            "classifications": [c.model_dump(mode="json") for c in classifications],
+            "action_results": [r.model_dump(mode="json") for r in action_results],
+            "digest_markdown": digest_markdown,
+        },
+        indent=2,
+    )
+    try:
+        response = await agent.run(payload)
+    except Exception as exc:  # noqa: BLE001 - third-party errors vary
+        logger.warning("self-review agent failed: %s", exc)
+        return None
+    review = _parse_self_review(_extract_response_text(response))
+    if review is None:
+        return None
+    logger.info(
+        "self-review verdict=%s issues=%d suggestions=%d",
+        review.verdict, len(review.issues), len(review.suggestions),
+    )
+    return review
+
+
+def _append_self_review_footer(digest: str, review: SelfReview) -> str:
+    """Append a self-review footer to the digest when verdict is not 'approved'."""
+    if review.verdict == "approved" or (not review.issues and not review.suggestions):
+        return digest
+    lines = [
+        "",
+        f"> ⚠️ **Self-review**: {review.verdict}",
+    ]
+    for i in review.issues:
+        lines.append(f"> - issue: {i}")
+    for s in review.suggestions:
+        lines.append(f"> - suggestion: {s}")
+    return digest.rstrip() + "\n" + "\n".join(lines) + "\n"
+
+
 def _execute_actions(
     snaps: list[PRSnapshot],
     classifications: list[PRClassification],
@@ -289,7 +357,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     """Run one full daily pass and return the report."""
     cfg = load_config_from_env()
 
-    logger.info("step 1/7: refresh tracker")
+    logger.info("step 1/8: refresh tracker")
     refresh_path_str = cfg["refresh_script"].strip()
     if not refresh_path_str:
         refresh_log = "[skipped] REFRESH_SCRIPT not set"
@@ -297,7 +365,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         refresh_log = refresh_tracker(Path(refresh_path_str))
     logger.info("refresh tail: %s", refresh_log.replace("\n", " | ")[:300])
 
-    logger.info("step 2/7: fetch open PRs (author=%s)", cfg["gh_author"])
+    logger.info("step 2/8: fetch open PRs (author=%s)", cfg["gh_author"])
     ignore = {r.strip() for r in cfg["ignore_repos"].split(",") if r.strip()}
     snaps = fetch_open_prs(cfg["gh_author"], ignore)
     logger.info("snapshots: %d PR(s)", len(snaps))
@@ -312,7 +380,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         logger.info("no open PRs — nothing to triage")
         return report
 
-    logger.info("step 3/7: analyzer agent classifies %d PR(s)", len(snaps))
+    logger.info("step 3/8: analyzer agent classifies %d PR(s)", len(snaps))
     analyzer = make_analyzer_agent()
     analyzer_input = json.dumps([_snapshot_for_llm(s) for s in snaps], indent=2)
     analyzer_response = await analyzer.run(analyzer_input)
@@ -332,13 +400,13 @@ async def run_daily(verbose: bool = False) -> DailyReport:
             max_prs = max(0, int(cfg["deep_dive_max_prs"]))
         except ValueError:
             max_prs = 3
-        logger.info("step 4/7: deep-dive sub-agent (max=%d)", max_prs)
+        logger.info("step 4/8: deep-dive sub-agent (max=%d)", max_prs)
         dives = await _run_deep_dive(snaps, classifications, max_prs=max_prs)
         logger.info("deep-dive analyses attached: %d", dives)
     else:
-        logger.info("step 4/7: deep-dive disabled (DEEP_DIVE_ENABLED!=true)")
+        logger.info("step 4/8: deep-dive disabled (DEEP_DIVE_ENABLED!=true)")
 
-    logger.info("step 5/7: execute auto-actions")
+    logger.info("step 5/8: execute auto-actions")
     action_results = _execute_actions(
         snaps,
         classifications,
@@ -354,7 +422,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         sum(1 for r in action_results if r.status == ActionStatus.SKIPPED),
     )
 
-    logger.info("step 6/7: digest drafter agent")
+    logger.info("step 6/8: digest drafter agent")
     drafter = make_digest_drafter_agent()
     drafter_input = json.dumps(
         {
@@ -367,7 +435,17 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     report.digest_markdown = _extract_response_text(digest_response)
     logger.info("digest drafted (%d chars)", len(report.digest_markdown))
 
-    logger.info("step 7/7: notification decision")
+    if cfg["self_review_enabled"].lower() == "true":
+        logger.info("step 7/8: self-review critic agent")
+        review = await _run_self_review(classifications, action_results, report.digest_markdown)
+        if review is not None:
+            report.self_review = review
+            if review.verdict != "approved":
+                report.digest_markdown = _append_self_review_footer(report.digest_markdown, review)
+    else:
+        logger.info("step 7/8: self-review disabled (SELF_REVIEW_ENABLED!=true)")
+
+    logger.info("step 8/8: notification decision")
     if not report.email_required:
         logger.info("no human-attention PRs and no failed actions — email skipped")
         return report
@@ -405,6 +483,12 @@ def _print_report_summary(report: DailyReport) -> None:
     print(f"Need human attention : {len(report.human_attention_prs)}")
     print(f"Auto-actions run     : {len(report.action_results)}")
     print(f"Failed actions       : {len(report.failed_actions)}")
+    if report.self_review is not None:
+        print(
+            f"Self-review verdict  : {report.self_review.verdict}"
+            f" ({len(report.self_review.issues)} issue(s),"
+            f" {len(report.self_review.suggestions)} suggestion(s))"
+        )
     if report.digest_markdown:
         print("\n--- digest ---")
         print(report.digest_markdown)

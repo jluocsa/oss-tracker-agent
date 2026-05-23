@@ -450,6 +450,7 @@ def load_config_from_env() -> dict[str, str]:
         "auto_update_branch": os.environ.get("AUTO_UPDATE_BRANCH", "true"),
         "deep_dive_enabled": os.environ.get("DEEP_DIVE_ENABLED", "true"),
         "deep_dive_max_prs": os.environ.get("DEEP_DIVE_MAX_PRS", "3"),
+        "self_review_enabled": os.environ.get("SELF_REVIEW_ENABLED", "true"),
         "email_from": os.environ.get("NOTIFY_EMAIL_FROM", ""),
         "email_to": os.environ.get("NOTIFY_EMAIL_TO", ""),
         "smtp_host": os.environ.get("SMTP_HOST", "smtp.office365.com"),

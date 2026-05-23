@@ -91,6 +91,14 @@ class ActionResult(BaseModel):
     detail: str = ""
 
 
+class SelfReview(BaseModel):
+    """LLM critic verdict on the drafter's final digest."""
+
+    verdict: str = "approved"  # approved | concerns | broken
+    issues: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
 class DailyReport(BaseModel):
     timestamp: datetime
     refresh_log_tail: str = ""
@@ -98,6 +106,7 @@ class DailyReport(BaseModel):
     classifications: list[PRClassification] = Field(default_factory=list)
     action_results: list[ActionResult] = Field(default_factory=list)
     digest_markdown: str = ""
+    self_review: Optional[SelfReview] = None
 
     @property
     def human_attention_prs(self) -> list[PRClassification]:
