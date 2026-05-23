@@ -7,19 +7,25 @@ name: OSS Tracker Agent
 # Override the time by editing the cron expression below.
 #
 # REQUIRED SECRETS (Repo Settings → Secrets and variables → Actions → Secrets):
-#   OPENAI_API_KEY          your OpenAI key
 #   GH_PAT_OSS_TRACKER      classic PAT with `repo` + `workflow` scopes
 #                           (needed to view/rerun checks and update branches
 #                            on external repos like microsoft/graphrag etc.)
-#   SMTP_USERNAME           your @outlook.com address
-#   SMTP_PASSWORD           Outlook app password
-#   NOTIFY_EMAIL_FROM       same as SMTP_USERNAME
-#   NOTIFY_EMAIL_TO         where to send the digest
+#
+#   --- Pick ONE LLM provider ---
+#   OPENAI_API_KEY          your OpenAI key (direct OpenAI)
+#     -- OR --
+#   AZURE_OPENAI_ENDPOINT       https://<resource>.cognitiveservices.azure.com/
+#   AZURE_OPENAI_API_KEY        key1 of the AI Services / Foundry resource
+#   AZURE_OPENAI_CHAT_MODEL     deployment name (e.g. `gpt-5`)
+#   AZURE_OPENAI_API_VERSION    e.g. `2025-03-01-preview`
+#
+# OPTIONAL EMAIL SECRETS (omit to skip email digest entirely):
+#   SMTP_USERNAME, SMTP_PASSWORD, NOTIFY_EMAIL_FROM, NOTIFY_EMAIL_TO
 #
 # OPTIONAL VARIABLES (Settings → Secrets and variables → Actions → Variables):
 #   GH_AUTHOR               default: jluocsa
 #   IGNORE_REPOS            default: jluocsa/Practice-Exam
-#   OPENAI_CHAT_MODEL       default: gpt-4o-mini
+#   OPENAI_CHAT_MODEL       default: gpt-4o-mini (only used with direct OpenAI)
 
 on:
   schedule:
@@ -72,9 +78,13 @@ jobs:
 
       - name: Run OSS Tracker Agent
         env:
-          # Model
+          # Model — pick OpenAI direct OR Azure OpenAI (agent prefers OPENAI_API_KEY if both set)
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_CHAT_MODEL: ${{ vars.OPENAI_CHAT_MODEL || 'gpt-4o-mini' }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_CHAT_MODEL: ${{ secrets.AZURE_OPENAI_CHAT_MODEL }}
+          AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
 
           # gh CLI auth
           GH_TOKEN: ${{ secrets.GH_PAT_OSS_TRACKER }}
