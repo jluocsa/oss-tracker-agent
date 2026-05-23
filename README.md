@@ -69,6 +69,28 @@ Copy-Item .env.template .env
 For Outlook SMTP you need an **app password**, not your Microsoft account password.
 Generate one at <https://account.live.com/proofs/AppPassword>.
 
+### Copilot coding-agent dispatch (optional, default OFF)
+
+When the deep-dive sub-agent identifies a fixable CI failure with high confidence
+on one of your own repos, the executor can dispatch GitHub's Copilot coding agent
+to attempt the fix by posting `@copilot <root_cause> <suggested_action>` as a PR
+comment. The next daily run picks up any new commit and CI result.
+
+| Var                                    | Default       | Purpose                                                     |
+| -------------------------------------- | ------------- | ----------------------------------------------------------- |
+| `AUTO_INVOKE_COPILOT_AGENT`            | `false`       | Master gate. Must be `true` to dispatch.                    |
+| `COPILOT_AGENT_REPO_ALLOWLIST`         | `jluocsa/*`   | Comma-separated fnmatch patterns of repos eligible          |
+| `COPILOT_AGENT_MIN_CONFIDENCE`         | `high`        | Minimum deep-dive confidence to dispatch (low/medium/high)  |
+| `COPILOT_AGENT_MAX_DISPATCHES_PER_RUN` | `2`           | Hard cap on dispatches per daily run                        |
+
+The model used by the coding agent is **the target repo's default**, not chosen by
+this dispatch. At time of writing GitHub's default for the coding agent is
+**Claude Sonnet 4.5**. On Copilot Pro+/Business/Enterprise, the repo admin can
+pin a different model at
+`https://github.com/<owner>/<repo>/settings/copilot/coding_agent`. The allowlist
+defaults to your own repos (`jluocsa/*`) because you can only pin / control the
+coding-agent settings on repos you administer.
+
 ## Manual test
 
 ```pwsh

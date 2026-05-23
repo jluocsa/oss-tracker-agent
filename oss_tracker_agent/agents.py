@@ -91,6 +91,8 @@ Sort high → medium → low urgency.
 
 ## Auto-actions taken
 Bullet list. Each item: `- [#NUM](url) repo — ACTION_NAME — status — detail`
+For action INVOKE_CODING_AGENT (GitHub Copilot coding-agent dispatch), prefix the
+bullet with `🤖 ` so a reader can spot the async-fix request at a glance.
 Group by status: success first, then failed.
 
 ## Quiet PRs
@@ -179,6 +181,9 @@ CHECK ALL OF THESE, in order:
    match the underlying classification's reasoning field (paraphrase ok, but
    no contradiction with urgency/needs_human).
 6. Markdown integrity: section headers exist, no leftover JSON, no greetings.
+7. Copilot dispatch surfaced: if any action_result has action == "INVOKE_CODING_AGENT",
+   that PR must appear in the "## Auto-actions taken" section, labelled
+   `INVOKE_CODING_AGENT` and prefixed with the 🤖 marker.
 
 OUTPUT — STRICT JSON, no prose, no markdown fences, exactly this shape:
 

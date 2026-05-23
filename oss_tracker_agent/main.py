@@ -45,10 +45,12 @@ from .models import (
     SelfReview,
 )
 from .tools import (
+    dispatch_copilot_agent,
     fetch_failed_check_logs,
     fetch_open_prs,
     load_config_from_env,
     refresh_tracker,
+    repo_matches_allowlist,
     rerun_failed_checks,
     send_email_smtp,
     update_branch,
@@ -309,12 +311,68 @@ def _append_self_review_footer(digest: str, review: SelfReview) -> str:
     return digest.rstrip() + "\n" + "\n".join(lines) + "\n"
 
 
+def _format_copilot_prompt(dd: DeepDiveAnalysis) -> str:
+    """Compose the `@copilot` prompt body from a deep-dive analysis."""
+    return (
+        f"Please investigate this CI failure. Automated deep-dive root cause: "
+        f"{dd.root_cause.strip()} Suggested action: {dd.suggested_action.strip()} "
+        f"(confidence={dd.confidence}). If you can identify and apply a safe fix, "
+        f"please open a commit on this PR's branch."
+    )
+
+
+def _decide_copilot_dispatch(
+    classifications: list[PRClassification],
+    snaps: list[PRSnapshot],
+    *,
+    allowlist: list[str],
+    min_confidence: str,
+    max_dispatches: int,
+) -> int:
+    """Append INVOKE_CODING_AGENT to classifications that pass all gates.
+
+    Gates: deep_dive attached, confidence >= min, repo in allowlist, PR not
+    draft, snapshot resolvable. Sorted by urgency then confidence, capped at
+    max_dispatches. Returns the count queued.
+    """
+    if max_dispatches <= 0 or not allowlist:
+        return 0
+    confidence_rank = {"low": 0, "medium": 1, "high": 2}
+    min_rank = confidence_rank.get(min_confidence.lower(), 2)
+    urgency_rank = {"high": 0, "medium": 1, "low": 2}
+    by_key = {(s.repo, s.number): s for s in snaps}
+    eligible: list[PRClassification] = []
+    for cls in classifications:
+        if cls.deep_dive is None:
+            continue
+        if confidence_rank.get(cls.deep_dive.confidence.lower(), 0) < min_rank:
+            continue
+        if not repo_matches_allowlist(cls.repo, allowlist):
+            continue
+        snap = by_key.get((cls.repo, cls.pr_number))
+        if snap is None or snap.is_draft:
+            continue
+        eligible.append(cls)
+    eligible.sort(
+        key=lambda c: (
+            urgency_rank.get(c.urgency, 9),
+            -confidence_rank.get((c.deep_dive.confidence if c.deep_dive else "low").lower(), 0),
+        )
+    )
+    eligible = eligible[:max_dispatches]
+    for cls in eligible:
+        if ActionType.INVOKE_CODING_AGENT not in cls.recommended_actions:
+            cls.recommended_actions.append(ActionType.INVOKE_CODING_AGENT)
+    return len(eligible)
+
+
 def _execute_actions(
     snaps: list[PRSnapshot],
     classifications: list[PRClassification],
     *,
     auto_rerun: bool,
     auto_update_branch: bool,
+    copilot_enabled: bool,
 ) -> list[ActionResult]:
     by_key = {(s.repo, s.number): s for s in snaps}
     results: list[ActionResult] = []
@@ -349,6 +407,30 @@ def _execute_actions(
                     )
                     continue
                 results.append(update_branch(snap))
+            elif action == ActionType.INVOKE_CODING_AGENT:
+                if not copilot_enabled:
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number,
+                            repo=snap.repo,
+                            action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_INVOKE_COPILOT_AGENT=false",
+                        )
+                    )
+                    continue
+                if cls.deep_dive is None:
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number,
+                            repo=snap.repo,
+                            action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="no deep_dive context to send",
+                        )
+                    )
+                    continue
+                results.append(dispatch_copilot_agent(snap, _format_copilot_prompt(cls.deep_dive)))
             # NOTIFY_HUMAN / NONE are not executed here
     return results
 
@@ -406,12 +488,33 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     else:
         logger.info("step 4/8: deep-dive disabled (DEEP_DIVE_ENABLED!=true)")
 
+    copilot_enabled = cfg["copilot_agent_enabled"].lower() == "true"
+    if copilot_enabled:
+        allowlist = [p.strip() for p in cfg["copilot_agent_allowlist"].split(",") if p.strip()]
+        try:
+            max_disp = max(0, int(cfg["copilot_agent_max_dispatches"]))
+        except ValueError:
+            max_disp = 2
+        queued = _decide_copilot_dispatch(
+            classifications,
+            snaps,
+            allowlist=allowlist,
+            min_confidence=cfg["copilot_agent_min_confidence"],
+            max_dispatches=max_disp,
+        )
+        if queued:
+            logger.info(
+                "copilot agent dispatch queued for %d PR(s) (allowlist=%s, min_conf=%s, cap=%d)",
+                queued, allowlist, cfg["copilot_agent_min_confidence"], max_disp,
+            )
+
     logger.info("step 5/8: execute auto-actions")
     action_results = _execute_actions(
         snaps,
         classifications,
         auto_rerun=cfg["auto_rerun"].lower() == "true",
         auto_update_branch=cfg["auto_update_branch"].lower() == "true",
+        copilot_enabled=copilot_enabled,
     )
     report.action_results = action_results
     logger.info(

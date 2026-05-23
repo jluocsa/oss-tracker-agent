@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import os
@@ -312,6 +313,46 @@ def fetch_failed_check_logs(
     return results
 
 
+def repo_matches_allowlist(repo: str, allowlist: list[str]) -> bool:
+    """True if repo matches any fnmatch pattern in allowlist (e.g. 'jluocsa/*')."""
+    for pat in allowlist:
+        pat = pat.strip()
+        if pat and fnmatch.fnmatch(repo, pat):
+            return True
+    return False
+
+
+def dispatch_copilot_agent(pr: PRSnapshot, prompt: str) -> ActionResult:
+    """Post `@copilot <prompt>` as a PR comment to invoke GitHub's coding agent.
+
+    The agent's model selection is governed by the *target repo's* Copilot
+    settings, not by this dispatch. For Copilot Pro+/Business/Enterprise, the
+    repo admin can pin a model at:
+        https://github.com/<owner>/<repo>/settings/copilot/coding_agent
+    The default at time of writing is Claude Sonnet 4.5.
+    """
+    body = f"@copilot {prompt}".strip()
+    proc = _run(
+        ["gh", "pr", "comment", str(pr.number), "--repo", pr.repo, "--body", body],
+        timeout=30,
+    )
+    if proc.returncode == 0:
+        return ActionResult(
+            pr_number=pr.number,
+            repo=pr.repo,
+            action=ActionType.INVOKE_CODING_AGENT,
+            status=ActionStatus.SUCCESS,
+            detail=(proc.stdout.strip() or "dispatched — see PR for agent response")[:200],
+        )
+    return ActionResult(
+        pr_number=pr.number,
+        repo=pr.repo,
+        action=ActionType.INVOKE_CODING_AGENT,
+        status=ActionStatus.FAILED,
+        detail=proc.stderr.strip()[:300],
+    )
+
+
 def send_email_smtp(
     subject: str,
     body_markdown: str,
@@ -451,6 +492,10 @@ def load_config_from_env() -> dict[str, str]:
         "deep_dive_enabled": os.environ.get("DEEP_DIVE_ENABLED", "true"),
         "deep_dive_max_prs": os.environ.get("DEEP_DIVE_MAX_PRS", "3"),
         "self_review_enabled": os.environ.get("SELF_REVIEW_ENABLED", "true"),
+        "copilot_agent_enabled": os.environ.get("AUTO_INVOKE_COPILOT_AGENT", "false"),
+        "copilot_agent_allowlist": os.environ.get("COPILOT_AGENT_REPO_ALLOWLIST", "jluocsa/*"),
+        "copilot_agent_min_confidence": os.environ.get("COPILOT_AGENT_MIN_CONFIDENCE", "high"),
+        "copilot_agent_max_dispatches": os.environ.get("COPILOT_AGENT_MAX_DISPATCHES_PER_RUN", "2"),
         "email_from": os.environ.get("NOTIFY_EMAIL_FROM", ""),
         "email_to": os.environ.get("NOTIFY_EMAIL_TO", ""),
         "smtp_host": os.environ.get("SMTP_HOST", "smtp.office365.com"),

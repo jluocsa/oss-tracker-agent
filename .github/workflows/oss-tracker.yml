@@ -98,6 +98,12 @@ jobs:
           DEEP_DIVE_ENABLED: ${{ vars.DEEP_DIVE_ENABLED || 'true' }}
           DEEP_DIVE_MAX_PRS: ${{ vars.DEEP_DIVE_MAX_PRS || '3' }}
           SELF_REVIEW_ENABLED: ${{ vars.SELF_REVIEW_ENABLED || 'true' }}
+          # Copilot coding-agent dispatch — default OFF.
+          # Flip AUTO_INVOKE_COPILOT_AGENT=true (repo Variables) to enable.
+          AUTO_INVOKE_COPILOT_AGENT: ${{ vars.AUTO_INVOKE_COPILOT_AGENT || 'false' }}
+          COPILOT_AGENT_REPO_ALLOWLIST: ${{ vars.COPILOT_AGENT_REPO_ALLOWLIST || 'jluocsa/*' }}
+          COPILOT_AGENT_MIN_CONFIDENCE: ${{ vars.COPILOT_AGENT_MIN_CONFIDENCE || 'high' }}
+          COPILOT_AGENT_MAX_DISPATCHES_PER_RUN: ${{ vars.COPILOT_AGENT_MAX_DISPATCHES_PER_RUN || '2' }}
 
           # Email
           SMTP_HOST: smtp.office365.com
