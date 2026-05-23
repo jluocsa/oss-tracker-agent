@@ -9,30 +9,32 @@ only when something needs your attention.
 1. Refreshes `..\OSS-STATUS.md` via your existing `refresh-oss-status.ps1`.
 2. Snapshots every open PR you author via `gh`.
 3. **Analyzer agent** (LLM) classifies each PR: rerun flaky checks, update branch, or escalate to human.
-4. **Executor** (deterministic Python) runs auto-actions via `gh run rerun --failed` / `gh pr update-branch`.
-5. **Digest drafter agent** (LLM) writes a Markdown email body.
-6. If any PR needs human action **or** any auto-action failed, sends the email via Outlook M365 SMTP.
+4. **Deep-dive agent** (LLM, gated) pulls `gh run view --log-failed` for the top flagged PRs and attaches a root-cause + suggested-action sub-bullet.
+5. **Executor** (deterministic Python) runs auto-actions via `gh run rerun --failed` / `gh pr update-branch`.
+6. **Digest drafter agent** (LLM) writes a Markdown email body, rendering deep-dive sub-bullets when present.
+7. **Self-review critic agent** (LLM) audits the drafter's output against the classifications; appends a `⚠️ Self-review` footer if anything looks wrong.
+8. If any PR needs human action **or** any auto-action failed, sends the email via Outlook M365 SMTP.
 
 When everything is healthy, **no email is sent**.
 
 ## Architecture
 
 ```
-+-------------------+      +----------------------+      +-------------------+
-| refresh_tracker   | -->  | fetch_open_prs (gh)  | -->  | analyzer (LLM)    |
-| (PowerShell)      |      |                      |      |                   |
-+-------------------+      +----------------------+      +---------+---------+
-                                                                   |
-                                                                   v
-+-------------------+      +----------------------+      +-------------------+
-| send_email_smtp   | <--  | digest_drafter (LLM) | <--  | executor (gh)     |
-| (Outlook SMTP)    |      |                      |      |                   |
-+-------------------+      +----------------------+      +-------------------+
++-------------------+   +----------------------+   +-------------------+   +---------------------+
+| refresh_tracker   |-->| fetch_open_prs (gh)  |-->| analyzer (LLM)    |-->| deep-dive (LLM)     |
+| (PowerShell)      |   |                      |   |                   |   | gated, gh run logs  |
++-------------------+   +----------------------+   +-------------------+   +----------+----------+
+                                                                                     |
+                                                                                     v
++-------------------+   +----------------------+   +-------------------+   +---------------------+
+| send_email_smtp   |<--| self-review critic   |<--| digest_drafter    |<--| executor (gh)       |
+| (Outlook SMTP)    |   | (LLM)                |   | (LLM)             |   | rerun / update      |
++-------------------+   +----------------------+   +-------------------+   +---------------------+
 ```
 
-Two LLM agents (`oss_pr_analyzer`, `oss_digest_drafter`), three deterministic Python tools
-(refresh, gh, smtp). The orchestrator in [oss_tracker_agent/main.py](oss_tracker_agent/main.py)
-wires them up linearly.
+Four LLM agents (`oss_pr_analyzer`, `oss_pr_deep_dive`, `oss_digest_drafter`, `oss_self_review`)
+and four deterministic Python tools (refresh, gh, executor, smtp). The orchestrator in
+[oss_tracker_agent/main.py](oss_tracker_agent/main.py) wires them up as an 8-step linear pipeline.
 
 ## Setup
 
