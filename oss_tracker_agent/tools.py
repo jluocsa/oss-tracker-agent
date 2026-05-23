@@ -255,6 +255,63 @@ def update_branch(pr: PRSnapshot) -> ActionResult:
     )
 
 
+def fetch_failed_check_logs(
+    pr: PRSnapshot,
+    *,
+    max_checks: int = 3,
+    tail_chars: int = 2000,
+) -> list[dict[str, str]]:
+    """Pull tail of `gh run view --log-failed` for up to N failing checks on the PR.
+
+    Returns a list of {check_name, workflow_name, log_tail}; empty if the PR has
+    no failing checks or none expose a workflow run_id we can dereference.
+    """
+    if not pr.failing_checks:
+        return []
+
+    seen_runs: set[str] = set()
+    results: list[dict[str, str]] = []
+    for c in pr.failing_checks:
+        if len(results) >= max_checks:
+            break
+        if not c.details_url:
+            continue
+        parts = c.details_url.rstrip("/").split("/")
+        if "runs" not in parts:
+            continue
+        idx = parts.index("runs")
+        if idx + 1 >= len(parts):
+            continue
+        run_id = parts[idx + 1]
+        if run_id in seen_runs:
+            continue
+        seen_runs.add(run_id)
+        proc = _run(
+            ["gh", "run", "view", run_id, "--repo", pr.repo, "--log-failed"],
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            logger.debug(
+                "gh run view --log-failed %s on %s failed: %s",
+                run_id, pr.repo, proc.stderr.strip()[:200],
+            )
+            continue
+        log = (proc.stdout or "").strip()
+        if not log:
+            continue
+        if len(log) > tail_chars:
+            log = log[-tail_chars:]
+        results.append(
+            {
+                "check_name": c.name,
+                "workflow_name": c.workflow_name,
+                "run_id": run_id,
+                "log_tail": log,
+            }
+        )
+    return results
+
+
 def send_email_smtp(
     subject: str,
     body_markdown: str,
@@ -391,6 +448,8 @@ def load_config_from_env() -> dict[str, str]:
         "ignore_repos": os.environ.get("IGNORE_REPOS", "jluocsa/Practice-Exam"),
         "auto_rerun": os.environ.get("AUTO_RERUN_FAILED_CHECKS", "true"),
         "auto_update_branch": os.environ.get("AUTO_UPDATE_BRANCH", "true"),
+        "deep_dive_enabled": os.environ.get("DEEP_DIVE_ENABLED", "true"),
+        "deep_dive_max_prs": os.environ.get("DEEP_DIVE_MAX_PRS", "3"),
         "email_from": os.environ.get("NOTIFY_EMAIL_FROM", ""),
         "email_to": os.environ.get("NOTIFY_EMAIL_TO", ""),
         "smtp_host": os.environ.get("SMTP_HOST", "smtp.office365.com"),

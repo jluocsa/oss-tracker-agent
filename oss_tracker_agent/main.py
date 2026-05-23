@@ -28,16 +28,22 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .agents import make_analyzer_agent, make_digest_drafter_agent
+from .agents import (
+    make_analyzer_agent,
+    make_deep_dive_agent,
+    make_digest_drafter_agent,
+)
 from .models import (
     ActionResult,
     ActionStatus,
     ActionType,
     DailyReport,
+    DeepDiveAnalysis,
     PRClassification,
     PRSnapshot,
 )
 from .tools import (
+    fetch_failed_check_logs,
     fetch_open_prs,
     load_config_from_env,
     refresh_tracker,
@@ -155,6 +161,86 @@ def _parse_classifications(raw: str, snaps: list[PRSnapshot]) -> list[PRClassifi
     return classifications
 
 
+def _parse_deep_dive(raw: str) -> DeepDiveAnalysis | None:
+    """Coerce a deep-dive agent reply into DeepDiveAnalysis, or None on failure."""
+    try:
+        parsed = json.loads(_strip_json_fence(raw))
+    except json.JSONDecodeError as exc:
+        logger.warning("deep-dive JSON parse failed: %s; raw=%s", exc, raw[:200])
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return DeepDiveAnalysis(
+        root_cause=str(parsed.get("root_cause", "")).strip()[:200],
+        suggested_action=str(parsed.get("suggested_action", "")).strip()[:200],
+        confidence=str(parsed.get("confidence", "low")).strip().lower() or "low",
+    )
+
+
+async def _run_deep_dive(
+    snaps: list[PRSnapshot],
+    classifications: list[PRClassification],
+    *,
+    max_prs: int,
+) -> int:
+    """Mutate classifications in place: attach DeepDiveAnalysis to the most-urgent
+    human-attention PRs that have failing checks. Returns count of dives performed.
+    """
+    if max_prs <= 0:
+        return 0
+    urgency_rank = {"high": 0, "medium": 1, "low": 2}
+    by_key = {(s.repo, s.number): s for s in snaps}
+    candidates = [
+        c for c in classifications
+        if c.needs_human
+        and c.urgency in {"high", "medium"}
+        and (by_key.get((c.repo, c.pr_number)) and by_key[(c.repo, c.pr_number)].failing_checks)
+    ]
+    candidates.sort(key=lambda c: urgency_rank.get(c.urgency, 9))
+    candidates = candidates[:max_prs]
+    if not candidates:
+        return 0
+
+    agent = make_deep_dive_agent()
+    dives_done = 0
+    for cls in candidates:
+        snap = by_key[(cls.repo, cls.pr_number)]
+        logs = fetch_failed_check_logs(snap)
+        if not logs:
+            continue
+        payload = json.dumps(
+            {
+                "pr": {
+                    "number": snap.number,
+                    "repo": snap.repo,
+                    "title": snap.title,
+                    "url": snap.url,
+                    "mergeable": snap.mergeable,
+                    "merge_state": snap.merge_state,
+                    "review_decision": snap.review_decision,
+                    "is_fork_pr": snap.is_fork_pr,
+                },
+                "failing_checks": logs,
+            },
+            indent=2,
+        )
+        try:
+            response = await agent.run(payload)
+        except Exception as exc:  # noqa: BLE001 - third-party errors vary
+            logger.warning("deep-dive agent failed for %s#%d: %s", cls.repo, cls.pr_number, exc)
+            continue
+        analysis = _parse_deep_dive(_extract_response_text(response))
+        if analysis is None:
+            continue
+        cls.deep_dive = analysis
+        dives_done += 1
+        logger.info(
+            "deep-dive %s#%d -> %s (confidence=%s)",
+            cls.repo, cls.pr_number, analysis.root_cause[:80], analysis.confidence,
+        )
+    return dives_done
+
+
 def _execute_actions(
     snaps: list[PRSnapshot],
     classifications: list[PRClassification],
@@ -203,7 +289,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     """Run one full daily pass and return the report."""
     cfg = load_config_from_env()
 
-    logger.info("step 1/6: refresh tracker")
+    logger.info("step 1/7: refresh tracker")
     refresh_path_str = cfg["refresh_script"].strip()
     if not refresh_path_str:
         refresh_log = "[skipped] REFRESH_SCRIPT not set"
@@ -211,7 +297,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         refresh_log = refresh_tracker(Path(refresh_path_str))
     logger.info("refresh tail: %s", refresh_log.replace("\n", " | ")[:300])
 
-    logger.info("step 2/6: fetch open PRs (author=%s)", cfg["gh_author"])
+    logger.info("step 2/7: fetch open PRs (author=%s)", cfg["gh_author"])
     ignore = {r.strip() for r in cfg["ignore_repos"].split(",") if r.strip()}
     snaps = fetch_open_prs(cfg["gh_author"], ignore)
     logger.info("snapshots: %d PR(s)", len(snaps))
@@ -226,7 +312,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         logger.info("no open PRs — nothing to triage")
         return report
 
-    logger.info("step 3/6: analyzer agent classifies %d PR(s)", len(snaps))
+    logger.info("step 3/7: analyzer agent classifies %d PR(s)", len(snaps))
     analyzer = make_analyzer_agent()
     analyzer_input = json.dumps([_snapshot_for_llm(s) for s in snaps], indent=2)
     analyzer_response = await analyzer.run(analyzer_input)
@@ -241,7 +327,18 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         sum(1 for c in classifications if c.needs_human),
     )
 
-    logger.info("step 4/6: execute auto-actions")
+    if cfg["deep_dive_enabled"].lower() == "true":
+        try:
+            max_prs = max(0, int(cfg["deep_dive_max_prs"]))
+        except ValueError:
+            max_prs = 3
+        logger.info("step 4/7: deep-dive sub-agent (max=%d)", max_prs)
+        dives = await _run_deep_dive(snaps, classifications, max_prs=max_prs)
+        logger.info("deep-dive analyses attached: %d", dives)
+    else:
+        logger.info("step 4/7: deep-dive disabled (DEEP_DIVE_ENABLED!=true)")
+
+    logger.info("step 5/7: execute auto-actions")
     action_results = _execute_actions(
         snaps,
         classifications,
@@ -257,7 +354,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         sum(1 for r in action_results if r.status == ActionStatus.SKIPPED),
     )
 
-    logger.info("step 5/6: digest drafter agent")
+    logger.info("step 6/7: digest drafter agent")
     drafter = make_digest_drafter_agent()
     drafter_input = json.dumps(
         {
@@ -270,7 +367,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     report.digest_markdown = _extract_response_text(digest_response)
     logger.info("digest drafted (%d chars)", len(report.digest_markdown))
 
-    logger.info("step 6/6: notification decision")
+    logger.info("step 7/7: notification decision")
     if not report.email_required:
         logger.info("no human-attention PRs and no failed actions — email skipped")
         return report

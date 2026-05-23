@@ -63,6 +63,14 @@ class PRSnapshot(BaseModel):
         return self.head_repository_owner.lower() != owner.lower()
 
 
+class DeepDiveAnalysis(BaseModel):
+    """Per-PR root-cause analysis produced by the deep-dive sub-agent."""
+
+    root_cause: str = ""
+    suggested_action: str = ""
+    confidence: str = "low"  # low | medium | high
+
+
 class PRClassification(BaseModel):
     """LLM-produced classification of what to do with a PR."""
 
@@ -72,6 +80,7 @@ class PRClassification(BaseModel):
     urgency: str = "low"  # low | medium | high
     needs_human: bool = False
     reasoning: str = ""
+    deep_dive: Optional[DeepDiveAnalysis] = None
 
 
 class ActionResult(BaseModel):

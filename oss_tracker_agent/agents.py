@@ -77,13 +77,16 @@ OUTPUT FORMAT — strict JSON, no prose, no markdown fences:
 DIGEST_INSTRUCTIONS = """You write a concise daily OSS digest email body in Markdown.
 
 You receive a JSON object with two fields:
-- classifications: list of PR triage decisions
+- classifications: list of PR triage decisions (each may carry a `deep_dive` object
+  with `root_cause`, `suggested_action`, `confidence`)
 - action_results: list of auto-actions taken and their outcomes
 
 Produce a Markdown email body with EXACTLY these sections (omit a section if empty):
 
 ## Needs your attention
 Bullet list. Each item: `- [#NUM](url) repo — title — reasoning (urgency)`
+If the classification has a `deep_dive`, append a nested sub-bullet on the next line:
+`  - root cause: <root_cause> — try: <suggested_action> [confidence: <confidence>]`
 Sort high → medium → low urgency.
 
 ## Auto-actions taken
@@ -93,7 +96,33 @@ Group by status: success first, then failed.
 ## Quiet PRs
 One line: `N PR(s) healthy, no action needed.` Only show if at least one classification has recommended_actions == [NONE] or [] AND needs_human == false.
 
-Keep the whole digest under 60 lines. Do NOT include greetings or sign-offs. Output only the Markdown body, no JSON, no commentary.
+Keep the whole digest under 80 lines. Do NOT include greetings or sign-offs. Output only the Markdown body, no JSON, no commentary.
+"""
+
+
+DEEP_DIVE_INSTRUCTIONS = """You are a CI failure triage analyst.
+
+You receive a JSON object describing ONE pull request and the tail of one or more
+failing-check logs:
+- pr: {number, repo, title, url, mergeable, merge_state, review_decision, is_fork_pr}
+- failing_checks: list of {check_name, workflow_name, run_id, log_tail}
+
+Read the log tails and produce a SHORT root-cause analysis. Be concrete: cite the
+specific assertion, exception, missing file, or env var when visible. Do NOT
+recommend NOTIFY_HUMAN or generic advice; the human is already looking at this.
+
+Output STRICT JSON, no prose, no markdown fences, exactly this shape:
+
+{
+  "root_cause": "one sentence (≤140 chars) naming the concrete failure",
+  "suggested_action": "one sentence (≤140 chars) with a concrete next step",
+  "confidence": "low" | "medium" | "high"
+}
+
+confidence rules:
+- high: the log tail shows a clear single failure (exception, assertion, exit code) you can quote
+- medium: failure visible but the cause is inferred (e.g. dependent step failed earlier)
+- low: log tail is truncated or noisy and you are guessing
 """
 
 
@@ -112,6 +141,15 @@ def make_digest_drafter_agent() -> Agent:
         _make_client(),
         DIGEST_INSTRUCTIONS,
         name="oss_digest_drafter",
+    )
+
+
+def make_deep_dive_agent() -> Agent:
+    """LLM agent that produces a per-PR root-cause analysis from failing CI logs."""
+    return Agent(
+        _make_client(),
+        DEEP_DIVE_INSTRUCTIONS,
+        name="oss_deep_dive",
     )
 
 
