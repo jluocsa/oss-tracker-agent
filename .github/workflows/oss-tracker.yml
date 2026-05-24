@@ -161,11 +161,11 @@ jobs:
           fi
           git config user.name  "oss-tracker-bot[automated]"
           git config user.email "oss-tracker-bot@users.noreply.github.com"
-          if git diff --quiet -- RUN_HISTORY.md; then
+          git add RUN_HISTORY.md
+          if git diff --cached --quiet -- RUN_HISTORY.md; then
             echo "No changes to RUN_HISTORY.md."
             exit 0
           fi
-          git add RUN_HISTORY.md
           git commit -m "chore(history): run ${{ github.run_id }} [skip ci]"
           for i in 1 2 3; do
             if git pull --rebase --autostash origin main && git push origin HEAD:main; then
