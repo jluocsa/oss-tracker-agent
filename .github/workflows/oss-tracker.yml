@@ -109,6 +109,15 @@ jobs:
           COPILOT_AGENT_MIN_CONFIDENCE: ${{ vars.COPILOT_AGENT_MIN_CONFIDENCE || 'high' }}
           COPILOT_AGENT_MAX_DISPATCHES_PER_RUN: ${{ vars.COPILOT_AGENT_MAX_DISPATCHES_PER_RUN || '2' }}
 
+          # Quick click-button actions — all default OFF, all scoped via QUICK_ACTIONS_REPO_ALLOWLIST.
+          QUICK_ACTIONS_REPO_ALLOWLIST: ${{ vars.QUICK_ACTIONS_REPO_ALLOWLIST || 'jluocsa/*' }}
+          AUTO_ENABLE_AUTO_MERGE: ${{ vars.AUTO_ENABLE_AUTO_MERGE || 'false' }}
+          AUTO_MERGE_METHOD: ${{ vars.AUTO_MERGE_METHOD || 'squash' }}
+          AUTO_MARK_READY_FOR_REVIEW: ${{ vars.AUTO_MARK_READY_FOR_REVIEW || 'false' }}
+          AUTO_APPROVE_WORKFLOW_RUN: ${{ vars.AUTO_APPROVE_WORKFLOW_RUN || 'false' }}
+          AUTO_RESOLVE_REVIEW_THREADS: ${{ vars.AUTO_RESOLVE_REVIEW_THREADS || 'false' }}
+          AUTO_DISMISS_STALE_REVIEWS: ${{ vars.AUTO_DISMISS_STALE_REVIEWS || 'false' }}
+
           # Email
           SMTP_HOST: smtp.office365.com
           SMTP_PORT: '587'

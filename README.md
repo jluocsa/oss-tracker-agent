@@ -91,6 +91,29 @@ pin a different model at
 defaults to your own repos (`jluocsa/*`) because you can only pin / control the
 coding-agent settings on repos you administer.
 
+### Quick click-button actions (optional, default OFF)
+
+Low-stakes maintenance clicks the agent can do for you. Each gate is independent,
+all default OFF, all scoped to `QUICK_ACTIONS_REPO_ALLOWLIST` (default `jluocsa/*`).
+
+| Var                              | Default     | What it does                                                                |
+| -------------------------------- | ----------- | --------------------------------------------------------------------------- |
+| `QUICK_ACTIONS_REPO_ALLOWLIST`   | `jluocsa/*` | fnmatch patterns of repos eligible for ANY quick action                     |
+| `AUTO_ENABLE_AUTO_MERGE`         | `false`     | Run `gh pr merge --auto` on approved, mergeable, non-draft PRs              |
+| `AUTO_MERGE_METHOD`              | `squash`    | One of `squash` / `merge` / `rebase`                                        |
+| `AUTO_MARK_READY_FOR_REVIEW`     | `false`     | `gh pr ready` on draft PRs with no failing checks                           |
+| `AUTO_APPROVE_WORKFLOW_RUN`      | `false`     | Approve any `action_required` workflow runs on the PR (first-time contrib) |
+| `AUTO_RESOLVE_REVIEW_THREADS`    | `false`     | Resolve threads you commented on after author pushed a new commit           |
+| `AUTO_DISMISS_STALE_REVIEWS`     | `false`     | Dismiss your own reviews on PRs where the author has pushed since           |
+
+**Scope caveat**: the current scan pulls only PRs *authored* by `GH_AUTHOR`. So:
+
+- `AUTO_ENABLE_AUTO_MERGE` and `AUTO_MARK_READY_FOR_REVIEW` fire on your own PRs — useful immediately.
+- `AUTO_APPROVE_WORKFLOW_RUN` is rarely useful here because your own PRs don't typically need maintainer approval.
+- `AUTO_RESOLVE_REVIEW_THREADS` and `AUTO_DISMISS_STALE_REVIEWS` are no-ops on PRs you authored (you can't review your own PR / resolve a thread you didn't open). They become useful once an "inbound" scan (PRs you reviewed, not authored) is added.
+
+All five executor branches + tool wrappers are in place, so adding the inbound scan later only requires wiring a second `fetch_*` call.
+
 ## Manual test
 
 ```pwsh

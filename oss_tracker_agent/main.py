@@ -45,13 +45,18 @@ from .models import (
     SelfReview,
 )
 from .tools import (
+    approve_pending_workflow_runs,
+    dismiss_stale_review,
     dispatch_copilot_agent,
+    enable_auto_merge,
     fetch_failed_check_logs,
     fetch_open_prs,
     load_config_from_env,
+    mark_ready_for_review,
     refresh_tracker,
     repo_matches_allowlist,
     rerun_failed_checks,
+    resolve_review_threads,
     send_email_smtp,
     update_branch,
 )
@@ -366,6 +371,89 @@ def _decide_copilot_dispatch(
     return len(eligible)
 
 
+def _decide_quick_actions(
+    classifications: list[PRClassification],
+    snaps: list[PRSnapshot],
+    *,
+    allowlist: list[str],
+    enable_auto_merge_gate: bool,
+    mark_ready_gate: bool,
+    approve_workflow_gate: bool,
+    resolve_threads_gate: bool,
+    dismiss_stale_gate: bool,
+) -> dict[str, int]:
+    """Append quick click-button actions to classifications deterministically.
+
+    For PRs in the allowlist, this evaluates each gate against snapshot data:
+
+    - ENABLE_AUTO_MERGE: not draft, reviewed-and-approved, mergeable, not BLOCKED/DIRTY.
+    - MARK_READY_FOR_REVIEW: is draft, no failing checks, mergeable, not BLOCKED/DIRTY.
+    - APPROVE_WORKFLOW_RUN: always queued (tool itself checks for action_required runs).
+    - RESOLVE_REVIEW_THREADS: always queued (tool filters to threads you authored
+      with newer author commits).
+    - DISMISS_STALE_REVIEW: always queued (tool filters to your reviews followed
+      by author commits). No-op on PRs you authored yourself.
+
+    Returns counts per action for logging.
+    """
+    counts = {
+        "enable_auto_merge": 0,
+        "mark_ready": 0,
+        "approve_workflow_run": 0,
+        "resolve_threads": 0,
+        "dismiss_stale": 0,
+    }
+    if not any([enable_auto_merge_gate, mark_ready_gate, approve_workflow_gate,
+                resolve_threads_gate, dismiss_stale_gate]):
+        return counts
+    if not allowlist:
+        return counts
+    by_key = {(s.repo, s.number): s for s in snaps}
+    blocked_states = {"DIRTY", "BLOCKED"}
+    for cls in classifications:
+        if not repo_matches_allowlist(cls.repo, allowlist):
+            continue
+        snap = by_key.get((cls.repo, cls.pr_number))
+        if snap is None:
+            continue
+        actions = cls.recommended_actions
+
+        if enable_auto_merge_gate \
+                and not snap.is_draft \
+                and snap.mergeable == "MERGEABLE" \
+                and (snap.merge_state or "") not in blocked_states \
+                and snap.review_decision == "APPROVED" \
+                and ActionType.ENABLE_AUTO_MERGE not in actions:
+            actions.append(ActionType.ENABLE_AUTO_MERGE)
+            counts["enable_auto_merge"] += 1
+
+        if mark_ready_gate \
+                and snap.is_draft \
+                and not snap.failing_checks \
+                and snap.mergeable in {"MERGEABLE", "UNKNOWN"} \
+                and (snap.merge_state or "") not in blocked_states \
+                and ActionType.MARK_READY_FOR_REVIEW not in actions:
+            actions.append(ActionType.MARK_READY_FOR_REVIEW)
+            counts["mark_ready"] += 1
+
+        if approve_workflow_gate \
+                and ActionType.APPROVE_WORKFLOW_RUN not in actions:
+            actions.append(ActionType.APPROVE_WORKFLOW_RUN)
+            counts["approve_workflow_run"] += 1
+
+        if resolve_threads_gate \
+                and ActionType.RESOLVE_REVIEW_THREADS not in actions:
+            actions.append(ActionType.RESOLVE_REVIEW_THREADS)
+            counts["resolve_threads"] += 1
+
+        if dismiss_stale_gate \
+                and ActionType.DISMISS_STALE_REVIEW not in actions:
+            actions.append(ActionType.DISMISS_STALE_REVIEW)
+            counts["dismiss_stale"] += 1
+
+    return counts
+
+
 def _execute_actions(
     snaps: list[PRSnapshot],
     classifications: list[PRClassification],
@@ -373,9 +461,12 @@ def _execute_actions(
     auto_rerun: bool,
     auto_update_branch: bool,
     copilot_enabled: bool,
+    quick_action_gates: dict[str, bool] | None = None,
+    auto_merge_method: str = "squash",
 ) -> list[ActionResult]:
     by_key = {(s.repo, s.number): s for s in snaps}
     results: list[ActionResult] = []
+    gates = quick_action_gates or {}
     for cls in classifications:
         snap = by_key.get((cls.repo, cls.pr_number))
         if snap is None:
@@ -431,6 +522,61 @@ def _execute_actions(
                     )
                     continue
                 results.append(dispatch_copilot_agent(snap, _format_copilot_prompt(cls.deep_dive)))
+            elif action == ActionType.ENABLE_AUTO_MERGE:
+                if not gates.get("enable_auto_merge", False):
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number, repo=snap.repo, action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_ENABLE_AUTO_MERGE=false",
+                        )
+                    )
+                    continue
+                results.append(enable_auto_merge(snap, method=auto_merge_method))
+            elif action == ActionType.MARK_READY_FOR_REVIEW:
+                if not gates.get("mark_ready", False):
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number, repo=snap.repo, action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_MARK_READY_FOR_REVIEW=false",
+                        )
+                    )
+                    continue
+                results.append(mark_ready_for_review(snap))
+            elif action == ActionType.APPROVE_WORKFLOW_RUN:
+                if not gates.get("approve_workflow_run", False):
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number, repo=snap.repo, action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_APPROVE_WORKFLOW_RUN=false",
+                        )
+                    )
+                    continue
+                results.append(approve_pending_workflow_runs(snap))
+            elif action == ActionType.RESOLVE_REVIEW_THREADS:
+                if not gates.get("resolve_threads", False):
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number, repo=snap.repo, action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_RESOLVE_REVIEW_THREADS=false",
+                        )
+                    )
+                    continue
+                results.append(resolve_review_threads(snap))
+            elif action == ActionType.DISMISS_STALE_REVIEW:
+                if not gates.get("dismiss_stale", False):
+                    results.append(
+                        ActionResult(
+                            pr_number=snap.number, repo=snap.repo, action=action,
+                            status=ActionStatus.SKIPPED,
+                            detail="AUTO_DISMISS_STALE_REVIEWS=false",
+                        )
+                    )
+                    continue
+                results.append(dismiss_stale_review(snap))
             # NOTIFY_HUMAN / NONE are not executed here
     return results
 
@@ -508,6 +654,33 @@ async def run_daily(verbose: bool = False) -> DailyReport:
                 queued, allowlist, cfg["copilot_agent_min_confidence"], max_disp,
             )
 
+    quick_action_gates = {
+        "enable_auto_merge": cfg["auto_enable_auto_merge"].lower() == "true",
+        "mark_ready": cfg["auto_mark_ready"].lower() == "true",
+        "approve_workflow_run": cfg["auto_approve_workflow_run"].lower() == "true",
+        "resolve_threads": cfg["auto_resolve_threads"].lower() == "true",
+        "dismiss_stale": cfg["auto_dismiss_stale_review"].lower() == "true",
+    }
+    if any(quick_action_gates.values()):
+        qa_allowlist = [p.strip() for p in cfg["quick_actions_allowlist"].split(",") if p.strip()]
+        qa_counts = _decide_quick_actions(
+            classifications,
+            snaps,
+            allowlist=qa_allowlist,
+            enable_auto_merge_gate=quick_action_gates["enable_auto_merge"],
+            mark_ready_gate=quick_action_gates["mark_ready"],
+            approve_workflow_gate=quick_action_gates["approve_workflow_run"],
+            resolve_threads_gate=quick_action_gates["resolve_threads"],
+            dismiss_stale_gate=quick_action_gates["dismiss_stale"],
+        )
+        if any(qa_counts.values()):
+            logger.info(
+                "quick actions queued: auto_merge=%d ready=%d approve_wf=%d resolve_threads=%d dismiss_stale=%d (allowlist=%s)",
+                qa_counts["enable_auto_merge"], qa_counts["mark_ready"],
+                qa_counts["approve_workflow_run"], qa_counts["resolve_threads"],
+                qa_counts["dismiss_stale"], qa_allowlist,
+            )
+
     logger.info("step 5/8: execute auto-actions")
     action_results = _execute_actions(
         snaps,
@@ -515,6 +688,8 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         auto_rerun=cfg["auto_rerun"].lower() == "true",
         auto_update_branch=cfg["auto_update_branch"].lower() == "true",
         copilot_enabled=copilot_enabled,
+        quick_action_gates=quick_action_gates,
+        auto_merge_method=cfg["auto_merge_method"],
     )
     report.action_results = action_results
     logger.info(

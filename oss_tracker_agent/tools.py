@@ -322,6 +322,352 @@ def repo_matches_allowlist(repo: str, allowlist: list[str]) -> bool:
     return False
 
 
+def enable_auto_merge(pr: PRSnapshot, method: str = "squash") -> ActionResult:
+    """Enable auto-merge on a PR via `gh pr merge --auto`. Fires when branch protections allow."""
+    if pr.is_draft:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.ENABLE_AUTO_MERGE,
+            status=ActionStatus.SKIPPED,
+            detail="PR is draft",
+        )
+    method_flag = f"--{method}"
+    proc = _run(
+        ["gh", "pr", "merge", str(pr.number), "--repo", pr.repo, "--auto", method_flag],
+        timeout=30,
+    )
+    if proc.returncode == 0:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.ENABLE_AUTO_MERGE,
+            status=ActionStatus.SUCCESS,
+            detail=(proc.stdout.strip() or "auto-merge enabled")[:200],
+        )
+    msg = proc.stderr.strip()[:300]
+    # "already enabled" / "clean merge possible" should not surface as failures
+    lower = msg.lower()
+    if "already" in lower and "auto" in lower:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.ENABLE_AUTO_MERGE,
+            status=ActionStatus.SKIPPED,
+            detail="auto-merge already enabled",
+        )
+    return ActionResult(
+        pr_number=pr.number, repo=pr.repo,
+        action=ActionType.ENABLE_AUTO_MERGE,
+        status=ActionStatus.FAILED,
+        detail=msg,
+    )
+
+
+def mark_ready_for_review(pr: PRSnapshot) -> ActionResult:
+    """Convert a draft PR to ready for review via `gh pr ready`."""
+    if not pr.is_draft:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.MARK_READY_FOR_REVIEW,
+            status=ActionStatus.SKIPPED,
+            detail="PR is not draft",
+        )
+    proc = _run(["gh", "pr", "ready", str(pr.number), "--repo", pr.repo], timeout=30)
+    if proc.returncode == 0:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.MARK_READY_FOR_REVIEW,
+            status=ActionStatus.SUCCESS,
+            detail="draft \u2192 ready for review",
+        )
+    return ActionResult(
+        pr_number=pr.number, repo=pr.repo,
+        action=ActionType.MARK_READY_FOR_REVIEW,
+        status=ActionStatus.FAILED,
+        detail=proc.stderr.strip()[:300],
+    )
+
+
+def approve_pending_workflow_runs(pr: PRSnapshot) -> ActionResult:
+    """Approve any `action_required` workflow runs attached to this PR.
+
+    Fires when GitHub gates a first-time contributor's workflow on maintainer approval.
+    Does nothing if no such runs exist.
+    """
+    proc = _run(
+        [
+            "gh", "api", f"repos/{pr.repo}/actions/runs",
+            "--paginate",
+            "-q",
+            f".workflow_runs[] | select(.status==\"action_required\") | select(any(.pull_requests[]?; .number=={pr.number})) | .id",
+        ],
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.APPROVE_WORKFLOW_RUN,
+            status=ActionStatus.FAILED,
+            detail=proc.stderr.strip()[:300],
+        )
+    ids = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not ids:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.APPROVE_WORKFLOW_RUN,
+            status=ActionStatus.SKIPPED,
+            detail="no action_required workflow runs",
+        )
+    approved: list[str] = []
+    failed: list[str] = []
+    for run_id in ids:
+        p = _run(
+            ["gh", "api", "-X", "POST", f"repos/{pr.repo}/actions/runs/{run_id}/approve"],
+            timeout=30,
+        )
+        if p.returncode == 0:
+            approved.append(run_id)
+        else:
+            failed.append(f"{run_id}:{p.stderr.strip()[:80]}")
+    if approved and not failed:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.APPROVE_WORKFLOW_RUN,
+            status=ActionStatus.SUCCESS,
+            detail=f"approved {len(approved)} run(s): {','.join(approved)}",
+        )
+    if approved:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.APPROVE_WORKFLOW_RUN,
+            status=ActionStatus.SUCCESS,
+            detail=f"approved {len(approved)}; failed {len(failed)}: {';'.join(failed)}",
+        )
+    return ActionResult(
+        pr_number=pr.number, repo=pr.repo,
+        action=ActionType.APPROVE_WORKFLOW_RUN,
+        status=ActionStatus.FAILED,
+        detail="; ".join(failed)[:300],
+    )
+
+
+def resolve_review_threads(pr: PRSnapshot) -> ActionResult:
+    """Resolve unresolved review threads where you (viewer) authored the comment and
+    the PR author has pushed a commit since.
+    """
+    owner, name = pr.repo.split("/", 1)
+    query = (
+        "query($owner: String!, $name: String!, $number: Int!) {"
+        "  viewer { login }"
+        "  repository(owner: $owner, name: $name) {"
+        "    pullRequest(number: $number) {"
+        "      commits(last: 50) { nodes { commit { committedDate } } }"
+        "      reviewThreads(first: 100) {"
+        "        nodes {"
+        "          id isResolved"
+        "          comments(first: 1) { nodes { author { login } createdAt } }"
+        "        }"
+        "      }"
+        "    }"
+        "  }"
+        "}"
+    )
+    proc = _run(
+        [
+            "gh", "api", "graphql",
+            "-f", f"query={query}",
+            "-F", f"owner={owner}",
+            "-F", f"name={name}",
+            "-F", f"number={pr.number}",
+        ],
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.RESOLVE_REVIEW_THREADS,
+            status=ActionStatus.FAILED,
+            detail=proc.stderr.strip()[:300],
+        )
+    try:
+        data = json.loads(proc.stdout).get("data", {})
+    except json.JSONDecodeError:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.RESOLVE_REVIEW_THREADS,
+            status=ActionStatus.FAILED,
+            detail="graphql JSON parse failed",
+        )
+    viewer = (data.get("viewer") or {}).get("login", "")
+    pull = (data.get("repository") or {}).get("pullRequest") or {}
+    commits = (pull.get("commits") or {}).get("nodes") or []
+    last_commit_at = commits[-1].get("commit", {}).get("committedDate") if commits else None
+    threads = (pull.get("reviewThreads") or {}).get("nodes") or []
+    to_resolve: list[str] = []
+    for t in threads:
+        if t.get("isResolved"):
+            continue
+        comments = (t.get("comments") or {}).get("nodes") or []
+        if not comments:
+            continue
+        first = comments[0]
+        if (first.get("author") or {}).get("login") != viewer:
+            continue
+        thread_at = first.get("createdAt") or ""
+        if not last_commit_at or not thread_at or last_commit_at <= thread_at:
+            continue
+        to_resolve.append(t["id"])
+    if not to_resolve:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.RESOLVE_REVIEW_THREADS,
+            status=ActionStatus.SKIPPED,
+            detail="no eligible threads to resolve",
+        )
+    mutation = (
+        "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) {"
+        " thread { id isResolved } } }"
+    )
+    resolved: list[str] = []
+    failed: list[str] = []
+    for tid in to_resolve:
+        p = _run(
+            ["gh", "api", "graphql", "-f", f"query={mutation}", "-F", f"id={tid}"],
+            timeout=30,
+        )
+        if p.returncode == 0:
+            resolved.append(tid)
+        else:
+            failed.append(f"{tid[:12]}:{p.stderr.strip()[:80]}")
+    if resolved and not failed:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.RESOLVE_REVIEW_THREADS,
+            status=ActionStatus.SUCCESS,
+            detail=f"resolved {len(resolved)} thread(s)",
+        )
+    if resolved:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.RESOLVE_REVIEW_THREADS,
+            status=ActionStatus.SUCCESS,
+            detail=f"resolved={len(resolved)} failed={len(failed)}",
+        )
+    return ActionResult(
+        pr_number=pr.number, repo=pr.repo,
+        action=ActionType.RESOLVE_REVIEW_THREADS,
+        status=ActionStatus.FAILED,
+        detail="; ".join(failed)[:300],
+    )
+
+
+def dismiss_stale_review(pr: PRSnapshot) -> ActionResult:
+    """Dismiss reviews by you on this PR if the author has pushed since.
+
+    Useful when you reviewed someone else's PR and they addressed your feedback.
+    No-op on PRs you authored yourself (you can't review your own PR).
+    """
+    owner, name = pr.repo.split("/", 1)
+    query = (
+        "query($owner: String!, $name: String!, $number: Int!) {"
+        "  viewer { login }"
+        "  repository(owner: $owner, name: $name) {"
+        "    pullRequest(number: $number) {"
+        "      commits(last: 50) { nodes { commit { committedDate } } }"
+        "      reviews(first: 50) {"
+        "        nodes { id state submittedAt author { login } }"
+        "      }"
+        "    }"
+        "  }"
+        "}"
+    )
+    proc = _run(
+        [
+            "gh", "api", "graphql",
+            "-f", f"query={query}",
+            "-F", f"owner={owner}",
+            "-F", f"name={name}",
+            "-F", f"number={pr.number}",
+        ],
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.DISMISS_STALE_REVIEW,
+            status=ActionStatus.FAILED,
+            detail=proc.stderr.strip()[:300],
+        )
+    try:
+        data = json.loads(proc.stdout).get("data", {})
+    except json.JSONDecodeError:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.DISMISS_STALE_REVIEW,
+            status=ActionStatus.FAILED,
+            detail="graphql JSON parse failed",
+        )
+    viewer = (data.get("viewer") or {}).get("login", "")
+    pull = (data.get("repository") or {}).get("pullRequest") or {}
+    commits = (pull.get("commits") or {}).get("nodes") or []
+    last_commit_at = commits[-1].get("commit", {}).get("committedDate") if commits else None
+    reviews = (pull.get("reviews") or {}).get("nodes") or []
+    candidates = [
+        r for r in reviews
+        if (r.get("author") or {}).get("login") == viewer
+        and r.get("state") in {"CHANGES_REQUESTED", "APPROVED"}
+        and last_commit_at and r.get("submittedAt") and r["submittedAt"] < last_commit_at
+    ]
+    if not candidates:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.DISMISS_STALE_REVIEW,
+            status=ActionStatus.SKIPPED,
+            detail="no stale reviews by you",
+        )
+    mutation = (
+        "mutation($id: ID!, $msg: String!) {"
+        "  dismissPullRequestReview(input: {pullRequestReviewId: $id, message: $msg}) {"
+        "    pullRequestReview { id state }"
+        "  }"
+        "}"
+    )
+    dismissed: list[str] = []
+    failed: list[str] = []
+    for r in candidates:
+        p = _run(
+            [
+                "gh", "api", "graphql",
+                "-f", f"query={mutation}",
+                "-F", f"id={r['id']}",
+                "-F", "msg=Auto-dismissed by oss-tracker-agent: author pushed new commits since this review.",
+            ],
+            timeout=30,
+        )
+        if p.returncode == 0:
+            dismissed.append(r["id"][:12])
+        else:
+            failed.append(f"{r['id'][:12]}:{p.stderr.strip()[:80]}")
+    if dismissed and not failed:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.DISMISS_STALE_REVIEW,
+            status=ActionStatus.SUCCESS,
+            detail=f"dismissed {len(dismissed)} stale review(s)",
+        )
+    if dismissed:
+        return ActionResult(
+            pr_number=pr.number, repo=pr.repo,
+            action=ActionType.DISMISS_STALE_REVIEW,
+            status=ActionStatus.SUCCESS,
+            detail=f"dismissed={len(dismissed)} failed={len(failed)}",
+        )
+    return ActionResult(
+        pr_number=pr.number, repo=pr.repo,
+        action=ActionType.DISMISS_STALE_REVIEW,
+        status=ActionStatus.FAILED,
+        detail="; ".join(failed)[:300],
+    )
+
+
 def dispatch_copilot_agent(pr: PRSnapshot, prompt: str) -> ActionResult:
     """Post `@copilot <prompt>` as a PR comment to invoke GitHub's coding agent.
 
@@ -496,6 +842,14 @@ def load_config_from_env() -> dict[str, str]:
         "copilot_agent_allowlist": os.environ.get("COPILOT_AGENT_REPO_ALLOWLIST", "jluocsa/*"),
         "copilot_agent_min_confidence": os.environ.get("COPILOT_AGENT_MIN_CONFIDENCE", "high"),
         "copilot_agent_max_dispatches": os.environ.get("COPILOT_AGENT_MAX_DISPATCHES_PER_RUN", "2"),
+        # Quick click-button actions (all default off, all share the same allowlist)
+        "quick_actions_allowlist": os.environ.get("QUICK_ACTIONS_REPO_ALLOWLIST", "jluocsa/*"),
+        "auto_enable_auto_merge": os.environ.get("AUTO_ENABLE_AUTO_MERGE", "false"),
+        "auto_merge_method": os.environ.get("AUTO_MERGE_METHOD", "squash"),
+        "auto_mark_ready": os.environ.get("AUTO_MARK_READY_FOR_REVIEW", "false"),
+        "auto_approve_workflow_run": os.environ.get("AUTO_APPROVE_WORKFLOW_RUN", "false"),
+        "auto_resolve_threads": os.environ.get("AUTO_RESOLVE_REVIEW_THREADS", "false"),
+        "auto_dismiss_stale_review": os.environ.get("AUTO_DISMISS_STALE_REVIEWS", "false"),
         "email_from": os.environ.get("NOTIFY_EMAIL_FROM", ""),
         "email_to": os.environ.get("NOTIFY_EMAIL_TO", ""),
         "smtp_host": os.environ.get("SMTP_HOST", "smtp.office365.com"),

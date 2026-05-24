@@ -93,6 +93,12 @@ Sort high → medium → low urgency.
 Bullet list. Each item: `- [#NUM](url) repo — ACTION_NAME — status — detail`
 For action INVOKE_CODING_AGENT (GitHub Copilot coding-agent dispatch), prefix the
 bullet with `🤖 ` so a reader can spot the async-fix request at a glance.
+For the quick click-button actions, use these emoji prefixes:
+  - ENABLE_AUTO_MERGE: `🔀 `
+  - MARK_READY_FOR_REVIEW: `📬 `
+  - APPROVE_WORKFLOW_RUN: `▶️ `
+  - RESOLVE_REVIEW_THREADS: `💬 `
+  - DISMISS_STALE_REVIEW: `🗑 `
 Group by status: success first, then failed.
 
 ## Quiet PRs
