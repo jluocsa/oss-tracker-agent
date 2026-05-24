@@ -4,10 +4,8 @@ name: OSS Tracker Agent
 #
 # Cron is 09:00 UTC = 1 AM PST (Nov–Mar) / 2 AM PDT (Mar–Nov).
 # GitHub Actions cron is UTC-only, so DST drifts the local hour by 1.
-# Override the time by editing the cron expression below.
-#
-# TESTING: currently set to hourly to validate pipeline + Copilot dispatch
-# decision logic. Revert to '0 9 * * *' (daily) when test window is done.
+# For strict 1 AM Pacific year-round, see the two-cron pattern in README.md
+# ("Install the daily 1:00 AM PST schedule" section).
 #
 # REQUIRED SECRETS (Repo Settings → Secrets and variables → Actions → Secrets):
 #   GH_PAT_OSS_TRACKER      classic PAT with `repo` + `workflow` scopes
@@ -32,8 +30,8 @@ name: OSS Tracker Agent
 
 on:
   schedule:
-    # TESTING: hourly. Revert to '0 9 * * *' for daily.
-    - cron: '0 * * * *'
+    # Daily at 09:00 UTC = 1 AM PST (winter) / 2 AM PDT (summer).
+    - cron: '0 9 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

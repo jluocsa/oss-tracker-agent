@@ -132,11 +132,15 @@ Or via VS Code: open the **oss-tracker-agent** folder, then F5 → **"OSS Tracke
 .\install-task.ps1
 ```
 
-The trigger uses **Windows local time**. If your system clock is set to Pacific, this is
-1:00 AM PST/PDT automatically. To pin to a UTC hour instead:
+By default `$StartTime` is interpreted in **Pacific time** (PST/PDT) and translated
+to the machine's local clock at install time. DST is resolved automatically for
+the current date — re-run `install-task.ps1` after each DST transition (spring /
+fall) to keep the scheduled local time aligned with Pacific. To anchor to UTC or
+to the machine's local clock instead:
 
 ```pwsh
-.\install-task.ps1 -StartTime '09:00' -StartTimeUtc   # 09:00 UTC = 01:00 PST (standard) / 02:00 PDT
+.\install-task.ps1 -StartTime '09:00' -TimeZone Utc      # 09:00 UTC = 01:00 PST (winter) / 02:00 PDT
+.\install-task.ps1 -StartTime '01:00' -TimeZone Local    # 01:00 on the machine's clock, no conversion
 ```
 
 Verify / manage:
