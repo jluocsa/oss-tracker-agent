@@ -50,7 +50,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   triage:
@@ -61,6 +61,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need a real token (not GITHUB_TOKEN with restricted contents) so we can push RUN_HISTORY.md.
+          token: ${{ secrets.GH_PAT_OSS_TRACKER }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -118,6 +121,12 @@ jobs:
           AUTO_RESOLVE_REVIEW_THREADS: ${{ vars.AUTO_RESOLVE_REVIEW_THREADS || 'false' }}
           AUTO_DISMISS_STALE_REVIEWS: ${{ vars.AUTO_DISMISS_STALE_REVIEWS || 'false' }}
 
+          # Persistent run history (appended to RUN_HISTORY.md, then pushed back to main with [skip ci]).
+          RUN_HISTORY_PATH: RUN_HISTORY.md
+          RUN_HISTORY_RUN_ID: ${{ github.run_id }}
+          RUN_HISTORY_TRIGGER: ${{ github.event_name }}
+          RUN_HISTORY_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
           # Email
           SMTP_HOST: smtp.office365.com
           SMTP_PORT: '587'
@@ -142,6 +151,31 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Commit run-history update
+        if: always()
+        run: |
+          if [ ! -f RUN_HISTORY.md ]; then
+            echo "RUN_HISTORY.md not present — nothing to commit."
+            exit 0
+          fi
+          git config user.name  "oss-tracker-bot[automated]"
+          git config user.email "oss-tracker-bot@users.noreply.github.com"
+          if git diff --quiet -- RUN_HISTORY.md; then
+            echo "No changes to RUN_HISTORY.md."
+            exit 0
+          fi
+          git add RUN_HISTORY.md
+          git commit -m "chore(history): run ${{ github.run_id }} [skip ci]"
+          for i in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push origin HEAD:main; then
+              echo "history pushed on attempt $i"
+              exit 0
+            fi
+            echo "push attempt $i failed — retrying"
+            sleep $((i * 5))
+          done
+          echo "::warning::Could not push RUN_HISTORY.md after 3 attempts — entry recorded in artifact only."
 
       - name: Job summary
         if: always()

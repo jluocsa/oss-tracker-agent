@@ -34,6 +34,7 @@ from .agents import (
     make_digest_drafter_agent,
     make_self_review_agent,
 )
+from .history import append_run_history
 from .models import (
     ActionResult,
     ActionStatus,
@@ -724,6 +725,7 @@ async def run_daily(verbose: bool = False) -> DailyReport:
         logger.info("step 7/8: self-review disabled (SELF_REVIEW_ENABLED!=true)")
 
     logger.info("step 8/8: notification decision")
+    _maybe_write_history(report)
     if not report.email_required:
         logger.info("no human-attention PRs and no failed actions — email skipped")
         return report
@@ -751,6 +753,32 @@ async def run_daily(verbose: bool = False) -> DailyReport:
     logger.info("email: %s — %s", email_result.status.value, email_result.detail)
 
     return report
+
+
+def _maybe_write_history(report: DailyReport) -> None:
+    """Append one entry to RUN_HISTORY.md when RUN_HISTORY_PATH is set."""
+
+    history_path_str = os.getenv("RUN_HISTORY_PATH", "").strip()
+    if not history_path_str:
+        return
+
+    run_id = os.getenv("RUN_HISTORY_RUN_ID") or os.getenv("GITHUB_RUN_ID") or "local"
+    trigger = os.getenv("RUN_HISTORY_TRIGGER") or os.getenv("GITHUB_EVENT_NAME") or "local"
+    workflow_url = os.getenv("RUN_HISTORY_URL") or None
+
+    try:
+        history_path = Path(history_path_str)
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        append_run_history(
+            report,
+            history_path,
+            run_id=str(run_id),
+            trigger=str(trigger),
+            workflow_url=workflow_url,
+        )
+        logger.info("appended run-history entry to %s", history_path)
+    except Exception as exc:
+        logger.warning("failed to write run history: %s", exc)
 
 
 def _print_report_summary(report: DailyReport) -> None:
