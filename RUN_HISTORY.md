@@ -29,19 +29,13 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
 
 <!-- entry -->
-## 2026-05-30 — Action item (manual) — ⏳ pending
+## 2026-05-30 — Action item (manual) — ✅ done
 
 **Task:** Submit upstream PR `fix/locale-key-parity` to [Azure-Samples/azure-search-openai-demo](https://github.com/Azure-Samples/azure-search-openai-demo)
 
-**Status:** Branch pushed to fork ([jluocsa:fix/locale-key-parity](https://github.com/jluocsa/azure-search-openai-demo/tree/fix/locale-key-parity), commit `f7bb0fdc`). PR **not yet created** — blocked by org SAML SSO (`microsoftopensource`).
+**Status:** **PR created — [#3067](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3067)** ("Fix locale key parity: remove stale i18n keys and add guard test"). `MERGEABLE`, `license/cla` ✅ passed, awaiting maintainer review.
 
 **Change:** Removed stale i18n keys (`helpTexts.llmInputs` from 8 locales; `labels.maxSubqueryCount` + `labels.vector.options.both` from pl) and added `tests/test_frontend_locales.py` guard test. All 9 locales pass key parity with `en`.
-
-**Next step (on corp PC VS Code):**
-1. Authorize gh OAuth token for `microsoftopensource` SSO (`gh auth login --web`).
-2. Run `gh pr create --repo Azure-Samples/azure-search-openai-demo --base main --head jluocsa:fix/locale-key-parity`.
-3. Fallback: open https://github.com/jluocsa/azure-search-openai-demo/pull/new/fix/locale-key-parity (base = `Azure-Samples/azure-search-openai-demo:main`).
-
 
 <!-- entry -->
 ## 2026-05-30 10:49 UTC — [run 26681911156](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26681911156) — ❌ failures
