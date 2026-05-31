@@ -3,6 +3,25 @@
 Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 entries.
 
 <!-- entry -->
+## 2026-05-31 — manual — opened 2 coverage PRs to openai/openai-agents-python — ✅ success
+
+**Trigger:** `manual` · **Opened:** 2 · **Verification:** per-file format/lint/typecheck/tests clean
+
+### 🆕 New PRs opened
+- [openai/openai-agents-python#3544](https://github.com/openai/openai-agents-python/pull/3544) — Add unit tests for `_openai_retry` helpers — coverage 77% → 95%
+- [openai/openai-agents-python#3545](https://github.com/openai/openai-agents-python/pull/3545) — Add unit tests for response-terminal failure formatting — `_response_terminal.py` coverage 86% → 100%
+
+<!-- entry -->
+## 2026-05-31 — manual — opened 3 PRs to openai/openai-agents-python — ✅ success
+
+**Trigger:** `manual` · **Opened:** 3 · **Verification:** format/lint/typecheck/tests clean (4615 passed, 11 skipped)
+
+### 🆕 New PRs opened
+- [openai/openai-agents-python#3541](https://github.com/openai/openai-agents-python/pull/3541) — Coerce `ToolCallItem`/`ToolCallOutputItem` `call_id` to `str | None` consistently — `fix` + tests
+- [openai/openai-agents-python#3542](https://github.com/openai/openai-agents-python/pull/3542) — Add tests for `run_demo_loop` streaming, EOF, and empty-input paths — `repl.py` coverage 60% → 100%
+- [openai/openai-agents-python#3543](https://github.com/openai/openai-agents-python/pull/3543) — Fix two docstring grammar errors in `tool.py` — docs only
+
+<!-- entry -->
 ## 2026-05-31 11:02 UTC — [run 26710796233](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26710796233) — ✅ success
 
 **Trigger:** `schedule` · **Scanned:** 17 · **Need attention:** 11 · **Auto-actions:** 0 · **Failed:** 0
