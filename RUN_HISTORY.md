@@ -3,6 +3,42 @@
 Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 entries.
 
 <!-- entry -->
+## 2026-06-01 15:27 UTC — [run 26764536671](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26764536671) — ❌ failures
+
+**Trigger:** `schedule` · **Scanned:** 22 · **Need attention:** 11 · **Auto-actions:** 0 · **Failed:** 1
+
+**Self-review:** broken (5 issue(s), 3 suggestion(s))
+
+### 🔴 Needs human attention
+- [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · mergeable=conflicting · state=dirty · urgency=high` — merge conflicts and DIRTY; draft PR also needs update/attention
+- [github/github-mcp-server#2443](https://github.com/github/github-mcp-server/pull/2443) — `READY · review required · state=behind · urgency=medium` — branch behind and 24 days with review required; needs both update and human review
+- [microsoft/agent-framework#5907](https://github.com/microsoft/agent-framework/pull/5907) — `READY · review required · mergeable=unknown · urgency=medium` — stale, 14 days with review required; needs human review
+- [microsoft/agent-framework#5908](https://github.com/microsoft/agent-framework/pull/5908) — `READY · review required · mergeable=unknown · urgency=medium` — stale, 14 days with review required; needs human review
+- [microsoft/agent-framework#6046](https://github.com/microsoft/agent-framework/pull/6046) — `READY · review required · mergeable=unknown · urgency=medium` — stale, 9 days with review required; needs human review
+- [microsoft/agent-framework#6054](https://github.com/microsoft/agent-framework/pull/6054) — `READY · review required · mergeable=unknown · urgency=medium` — stale, 8 days with review required; needs human review
+- [microsoft/semantic-kernel#14030](https://github.com/microsoft/semantic-kernel/pull/14030) — `READY · review required · state=blocked · urgency=medium` — stale, 8 days with review required; needs human review
+- [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · state=blocked · urgency=medium` — stale, 8 days with review required; needs human review
+- [openai/openai-cookbook#2669](https://github.com/openai/openai-cookbook/pull/2669) — `READY · review required · state=blocked · urgency=medium` — stale, 24 days with review required; needs human review
+- [openai/openai-cookbook#2702](https://github.com/openai/openai-cookbook/pull/2702) — `READY · review required · state=blocked · urgency=medium` — stale, 15 days with review required; needs human review
+- [openai/openai-cookbook#2704](https://github.com/openai/openai-cookbook/pull/2704) — `READY · review required · state=blocked · urgency=medium` — stale, 15 days with review required; needs human review
+
+### ❌ Failed actions
+- [github/github-mcp-server#2443](https://github.com/github/github-mcp-server/pull/2443) — `UPDATE_BRANCH` — GraphQL: Resource not accessible by personal access token (updatePullRequestBranch)
+
+### 🟢 Quiet (11)
+- [Azure-Samples/azure-search-openai-demo#3067](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3067) — `READY` ✅
+- [Azure-Samples/azure-search-openai-demo#3068](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3068) — `READY` ✅
+- [Azure-Samples/azure-search-openai-demo#3069](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3069) — `READY` ✅
+- [Azure-Samples/azure-search-openai-demo#3070](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3070) — `READY` ✅
+- [Azure-Samples/azure-search-openai-demo#3071](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3071) — `READY` ✅
+- [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
+- [openai/openai-agents-python#3541](https://github.com/openai/openai-agents-python/pull/3541) — `READY · state=blocked`
+- [openai/openai-agents-python#3542](https://github.com/openai/openai-agents-python/pull/3542) — `READY · state=blocked`
+- [openai/openai-agents-python#3543](https://github.com/openai/openai-agents-python/pull/3543) — `READY · state=blocked`
+- [openai/openai-agents-python#3544](https://github.com/openai/openai-agents-python/pull/3544) — `READY · state=blocked`
+- [openai/openai-agents-python#3545](https://github.com/openai/openai-agents-python/pull/3545) — `READY · state=blocked`
+
+<!-- entry -->
 ## 2026-05-31 — manual — opened 2 coverage PRs to openai/openai-agents-python — ✅ success
 
 **Trigger:** `manual` · **Opened:** 2 · **Verification:** per-file format/lint/typecheck/tests clean
@@ -10,6 +46,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 ### 🆕 New PRs opened
 - [openai/openai-agents-python#3544](https://github.com/openai/openai-agents-python/pull/3544) — Add unit tests for `_openai_retry` helpers — coverage 77% → 95%
 - [openai/openai-agents-python#3545](https://github.com/openai/openai-agents-python/pull/3545) — Add unit tests for response-terminal failure formatting — `_response_terminal.py` coverage 86% → 100%
+
 
 <!-- entry -->
 ## 2026-05-31 — manual — opened 3 PRs to openai/openai-agents-python — ✅ success
@@ -20,6 +57,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [openai/openai-agents-python#3541](https://github.com/openai/openai-agents-python/pull/3541) — Coerce `ToolCallItem`/`ToolCallOutputItem` `call_id` to `str | None` consistently — `fix` + tests
 - [openai/openai-agents-python#3542](https://github.com/openai/openai-agents-python/pull/3542) — Add tests for `run_demo_loop` streaming, EOF, and empty-input paths — `repl.py` coverage 60% → 100%
 - [openai/openai-agents-python#3543](https://github.com/openai/openai-agents-python/pull/3543) — Fix two docstring grammar errors in `tool.py` — docs only
+
 
 <!-- entry -->
 ## 2026-05-31 11:02 UTC — [run 26710796233](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26710796233) — ✅ success
@@ -49,6 +87,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [Azure-Samples/azure-search-openai-demo#3071](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3071) — `READY` ✅
 - [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
 
+
 <!-- entry -->
 ## 2026-05-30 20:05 UTC — [run 26693632478](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26693632478) — ✅ success
 
@@ -76,6 +115,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
 
 
+
 <!-- entry -->
 ## 2026-05-30 — Action item (manual) — ✅ done
 
@@ -84,6 +124,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 **Status:** **PR created — [#3067](https://github.com/Azure-Samples/azure-search-openai-demo/pull/3067)** ("Fix locale key parity: remove stale i18n keys and add guard test"). `MERGEABLE`, `license/cla` ✅ passed, awaiting maintainer review.
 
 **Change:** Removed stale i18n keys (`helpTexts.llmInputs` from 8 locales; `labels.maxSubqueryCount` + `labels.vector.options.both` from pl) and added `tests/test_frontend_locales.py` guard test. All 9 locales pass key parity with `en`.
+
 
 
 <!-- entry -->
@@ -112,6 +153,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [microsoft/semantic-kernel#14030](https://github.com/microsoft/semantic-kernel/pull/14030) — `READY · review required · state=blocked` ✅✅✅✅✅✅⏭✅
 - [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · state=blocked` ✅✅✅✅✅⏭⏭⏭
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
+
 
 
 
@@ -146,6 +188,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 
 
 
+
 <!-- entry -->
 ## 2026-05-28 12:33 UTC — [run 26574849040](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26574849040) — ❌ failures
 
@@ -176,6 +219,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [microsoft/agent-framework#6054](https://github.com/microsoft/agent-framework/pull/6054) — `READY · review required · mergeable=unknown` ✅✅✅✅⏭⏭⏭⏭
 - [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
 - [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · mergeable=unknown` ✅✅✅✅✅⏭⏭⏭
+
 
 
 
@@ -217,6 +261,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 
 
 
+
 <!-- entry -->
 ## 2026-05-25 12:36 UTC — [run 26400813568](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26400813568) — ✅ success
 
@@ -248,6 +293,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 
 
 
+
 <!-- entry -->
 ## 2026-05-24 14:40 UTC — [run 26364163527](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26364163527) — ✅ success
 
@@ -273,6 +319,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
 - [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · state=blocked` ✅✅✅✅✅✅✅✅
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
+
 
 
 
@@ -315,6 +362,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 
 
 
+
 <!-- entry -->
 ## 2026-05-24 10:01 UTC — [run 26358232601](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26358232601) — ✅ success
 
@@ -340,6 +388,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
 - [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · state=blocked` ✅✅✅✅✅✅✅✅
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
+
 
 
 
@@ -386,6 +435,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 
 
 
+
 <!-- entry -->
 ## 2026-05-24 07:07 UTC — [run 26354737805](https://github.com/jluocsa/oss-tracker-agent/actions/runs/26354737805) — ✅ success
 
@@ -411,6 +461,7 @@ Auto-appended by the daily/hourly workflow. Newest run at top. Capped at 200 ent
 - [microsoft/graphrag#2363](https://github.com/microsoft/graphrag/pull/2363) — `READY · review required · state=blocked · 4 failing checks` ❌❌✅✅✅✅✅❌
 - [microsoft/semantic-kernel#14031](https://github.com/microsoft/semantic-kernel/pull/14031) — `READY · review required · state=blocked` ✅✅✅✅✅✅✅✅
 - [openai/openai-cookbook#2738](https://github.com/openai/openai-cookbook/pull/2738) — `DRAFT · review required · state=blocked`
+
 
 
 
